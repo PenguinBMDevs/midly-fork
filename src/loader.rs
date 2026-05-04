@@ -32,6 +32,9 @@ use crate::{
     event::{MetaMessage, MidiMessage, TrackEvent, TrackEventKind},
 };
 
+#[cfg(all(feature = "std", feature = "memmap"))]
+use crate::{Header, Timing};
+
 #[cfg(feature = "alloc")]
 use alloc::vec::Vec;
 
@@ -445,15 +448,20 @@ fn extract_notes_internal(smf: &crate::Smf) -> (Vec<PackedNote>, Vec<(u32, f32)>
     // Merge results
     let total_notes: usize = track_results.iter().map(|(n, _)| n.len()).sum();
     let mut all_notes = Vec::with_capacity(total_notes);
-    let mut all_tempo_changes = vec![(0u32, 120.0f32)];
+    let mut all_tempo_changes: Vec<(u32, f32)> = Vec::new();
 
     for (notes, tempo_changes) in track_results {
         all_notes.extend(notes);
-        for (tick, bpm) in tempo_changes {
-            if !all_tempo_changes.iter().any(|(t, _)| *t == tick) {
-                all_tempo_changes.push((tick, bpm));
+        for tempo in tempo_changes {
+            if !all_tempo_changes.iter().any(|(t, _)| *t == tempo.0) {
+                all_tempo_changes.push(tempo);
             }
         }
+    }
+
+    // MIDI default is 120 BPM; only insert default if no tempo at tick 0 exists
+    if !all_tempo_changes.iter().any(|(t, _)| *t == 0) {
+        all_tempo_changes.push((0u32, 120.0f32));
     }
 
     all_tempo_changes.sort_unstable_by_key(|&(t, _)| t);
@@ -537,15 +545,20 @@ pub fn extract_notes_from_bytes(bytes: &[u8]) -> crate::Result<(Vec<PackedNote>,
     // Merge results
     let total_notes: usize = track_results.iter().map(|(n, _)| n.len()).sum();
     let mut all_notes = Vec::with_capacity(total_notes);
-    let mut all_tempo_changes = vec![(0u32, 120.0f32)];
+    let mut all_tempo_changes: Vec<(u32, f32)> = Vec::new();
 
     for (notes, tempo_changes) in track_results {
         all_notes.extend(notes);
-        for (tick, bpm) in tempo_changes {
-            if !all_tempo_changes.iter().any(|(t, _)| *t == tick) {
-                all_tempo_changes.push((tick, bpm));
+        for tempo in tempo_changes {
+            if !all_tempo_changes.iter().any(|(t, _)| *t == tempo.0) {
+                all_tempo_changes.push(tempo);
             }
         }
+    }
+
+    // MIDI default is 120 BPM; only insert default if no tempo at tick 0 exists
+    if !all_tempo_changes.iter().any(|(t, _)| *t == 0) {
+        all_tempo_changes.push((0u32, 120.0f32));
     }
 
     all_tempo_changes.sort_unstable_by_key(|&(t, _)| t);
@@ -1085,7 +1098,7 @@ pub fn scan_midi_file(path: &std::path::Path) -> crate::Result<MidiScanResult> {
     let mut result = MidiScanResult {
         note_count: 0,
         track_count: 0,
-        tempo_changes: vec![(0, 120.0f32)],
+        tempo_changes: Vec::new(),
         max_tick: 0,
         division,
     };
@@ -1204,6 +1217,11 @@ pub fn scan_midi_file(path: &std::path::Path) -> crate::Result<MidiScanResult> {
             result.tempo_changes.extend(track_tempos);
             result.track_count += 1;
         }
+    }
+
+    // MIDI default is 120 BPM; only insert default if no tempo at tick 0 exists
+    if !result.tempo_changes.iter().any(|(t, _)| *t == 0) {
+        result.tempo_changes.push((0, 120.0f32));
     }
 
     result.tempo_changes.sort_unstable_by_key(|&(t, _)| t);
