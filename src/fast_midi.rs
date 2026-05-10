@@ -19,6 +19,9 @@ use crate::riff;
 pub(crate) enum MidiEvent<'a> {
     NoteOn { _channel: u8, key: u8, velocity: u8 },
     NoteOff { _channel: u8, key: u8, _velocity: u8 },
+    ControlChange { channel: u8, controller: u8, value: u8 },
+    ProgramChange { channel: u8, program: u8 },
+    PitchBend { channel: u8, bend: u16 },
     Meta { event_type: u8, data: &'a [u8] },
     Other,
 }
@@ -123,14 +126,61 @@ impl<'a> TrackIter<'a> {
                     MidiEvent::Other
                 }
             }
+            0xB0 => {
+                let (controller, value) = if self.offset + 2 <= len {
+                    unsafe {
+                        (
+                            *self.data.get_unchecked(self.offset),
+                            *self.data.get_unchecked(self.offset + 1),
+                        )
+                    }
+                } else {
+                    (
+                        self.data.get(self.offset).copied().unwrap_or(0),
+                        self.data.get(self.offset + 1).copied().unwrap_or(0),
+                    )
+                };
+                self.offset = self.offset.saturating_add(2);
+                MidiEvent::ControlChange {
+                    channel: status & 0x0F,
+                    controller,
+                    value,
+                }
+            }
+            0xC0 => {
+                let program = self.data.get(self.offset).copied().unwrap_or(0);
+                self.offset = self.offset.saturating_add(1);
+                MidiEvent::ProgramChange {
+                    channel: status & 0x0F,
+                    program,
+                }
+            }
+            0xE0 => {
+                let (lsb, msb) = if self.offset + 2 <= len {
+                    unsafe {
+                        (
+                            *self.data.get_unchecked(self.offset),
+                            *self.data.get_unchecked(self.offset + 1),
+                        )
+                    }
+                } else {
+                    (
+                        self.data.get(self.offset).copied().unwrap_or(0),
+                        self.data.get(self.offset + 1).copied().unwrap_or(0),
+                    )
+                };
+                self.offset = self.offset.saturating_add(2);
+                let bend = ((msb as u16) << 7) | (lsb as u16);
+                MidiEvent::PitchBend {
+                    channel: status & 0x0F,
+                    bend,
+                }
+            }
             _ => {
                 // Skip the data bytes for channel messages we don't care about.
                 match status & 0xF0 {
-                    0xA0 | 0xB0 | 0xE0 => {
+                    0xA0 | 0xD0 => {
                         self.offset = self.offset.saturating_add(2);
-                    }
-                    0xC0 | 0xD0 => {
-                        self.offset = self.offset.saturating_add(1);
                     }
                     _ => {}
                 }

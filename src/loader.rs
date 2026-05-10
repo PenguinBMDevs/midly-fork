@@ -82,6 +82,89 @@ pub struct PackedNote {
     pub track: u16,
 }
 
+/// A compact, packed representation of a MIDI control event (CC / PC / PB).
+///
+/// Uses **10 bytes** to store control changes, program changes, and pitch bend events.
+/// The `#[repr(C, packed)]` layout ensures no padding overhead.
+///
+/// # Encoding
+/// - `kind`: 0 = ControlChange, 1 = ProgramChange, 2 = PitchBend
+/// - `param` encoding:
+///   - CC: `(controller << 8) | value`
+///   - PC: `program`
+///   - PB: raw 14-bit value (0..16383)
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[repr(C, packed)]
+pub struct PackedControlEvent {
+    /// Event time in MIDI ticks (4 bytes)
+    pub tick: u32,
+    /// Track index, supports up to 65535 tracks (2 bytes)
+    pub track: u16,
+    /// Event kind: 0=CC, 1=PC, 2=PB (1 byte)
+    pub kind: u8,
+    /// MIDI channel (0-15) (1 byte)
+    pub channel: u8,
+    /// Parameter value (2 bytes) — see struct docs for encoding
+    pub param: u16,
+}
+
+impl PackedControlEvent {
+    /// Create a new packed control change event.
+    #[inline]
+    pub fn control_change(tick: u32, track: u16, channel: u8, controller: u8, value: u8) -> Self {
+        Self {
+            tick,
+            track,
+            kind: 0,
+            channel: channel & 0x0F,
+            param: ((controller as u16) << 8) | (value as u16),
+        }
+    }
+
+    /// Create a new packed program change event.
+    #[inline]
+    pub fn program_change(tick: u32, track: u16, channel: u8, program: u8) -> Self {
+        Self {
+            tick,
+            track,
+            kind: 1,
+            channel: channel & 0x0F,
+            param: program as u16,
+        }
+    }
+
+    /// Create a new packed pitch bend event.
+    #[inline]
+    pub fn pitch_bend(tick: u32, track: u16, channel: u8, bend: u16) -> Self {
+        Self {
+            tick,
+            track,
+            kind: 2,
+            channel: channel & 0x0F,
+            param: bend & 0x3FFF,
+        }
+    }
+
+    /// Decode parameter as CC controller and value.
+    #[inline]
+    pub fn as_control_change(&self) -> (u8, u8) {
+        ((self.param >> 8) as u8, (self.param & 0xFF) as u8)
+    }
+
+    /// Decode parameter as program number.
+    #[inline]
+    pub fn as_program_change(&self) -> u8 {
+        (self.param & 0x7F) as u8
+    }
+
+    /// Decode parameter as pitch bend value (normalized to -1.0..1.0).
+    #[inline]
+    pub fn as_pitch_bend(&self) -> f32 {
+        let raw = self.param as i16 - 8192;
+        raw as f32 / 8192.0
+    }
+}
+
 impl PackedNote {
     /// Create a new packed note.
     #[inline]
@@ -346,6 +429,66 @@ impl NoteAccumulator {
     }
 }
 
+/// Accumulator for MIDI control events (CC / PC / PB).
+#[cfg(feature = "alloc")]
+#[derive(Debug)]
+struct ControlEventAccumulator {
+    events: Vec<PackedControlEvent>,
+    current_tick: u32,
+    track_idx: u16,
+}
+
+#[cfg(feature = "alloc")]
+impl ControlEventAccumulator {
+    fn new(track_idx: u16) -> Self {
+        Self {
+            events: Vec::with_capacity(64),
+            current_tick: 0,
+            track_idx,
+        }
+    }
+
+    #[inline]
+    fn advance(&mut self, delta: u32) {
+        self.current_tick = self.current_tick.saturating_add(delta);
+    }
+
+    #[inline]
+    fn control_change(&mut self, channel: u8, controller: u8, value: u8) {
+        self.events.push(PackedControlEvent::control_change(
+            self.current_tick,
+            self.track_idx,
+            channel,
+            controller,
+            value,
+        ));
+    }
+
+    #[inline]
+    fn program_change(&mut self, channel: u8, program: u8) {
+        self.events.push(PackedControlEvent::program_change(
+            self.current_tick,
+            self.track_idx,
+            channel,
+            program,
+        ));
+    }
+
+    #[inline]
+    fn pitch_bend(&mut self, channel: u8, bend: u16) {
+        self.events.push(PackedControlEvent::pitch_bend(
+            self.current_tick,
+            self.track_idx,
+            channel,
+            bend,
+        ));
+    }
+
+    fn finish(self) -> Vec<PackedControlEvent> {
+        self.events
+    }
+}
+
 /// A track cursor for streaming note extraction.
 ///
 /// This provides a low-level iterator over MIDI events from a single track,
@@ -493,6 +636,104 @@ fn parse_track_notes(track: &[TrackEvent], track_idx: u16) -> (Vec<PackedNote>, 
     acc.finish()
 }
 
+#[cfg(feature = "alloc")]
+fn parse_track_notes_and_control_events(
+    track: &[TrackEvent],
+    track_idx: u16,
+) -> (Vec<PackedNote>, Vec<(u32, f32)>, Vec<PackedControlEvent>) {
+    let mut note_acc = NoteAccumulator::new(track_idx);
+    let mut ctrl_acc = ControlEventAccumulator::new(track_idx);
+
+    for event in track {
+        let delta = event.delta.as_int();
+        note_acc.advance(delta);
+        ctrl_acc.advance(delta);
+
+        match &event.kind {
+            TrackEventKind::Midi { channel, message } => match message {
+                MidiMessage::NoteOn { key, vel } => {
+                    note_acc.note_on(key.as_int(), vel.as_int());
+                }
+                MidiMessage::NoteOff { key, vel: _ } => note_acc.note_off(key.as_int()),
+                MidiMessage::Controller { controller, value } => {
+                    ctrl_acc.control_change(
+                        channel.as_int(),
+                        controller.as_int(),
+                        value.as_int(),
+                    );
+                }
+                MidiMessage::ProgramChange { program } => {
+                    ctrl_acc.program_change(channel.as_int(), program.as_int());
+                }
+                MidiMessage::PitchBend { bend } => {
+                    let bend_u16 = bend.as_int() as u16;
+                    ctrl_acc.pitch_bend(channel.as_int(), bend_u16);
+                }
+                _ => {}
+            },
+            TrackEventKind::Meta(MetaMessage::Tempo(tempo)) => {
+                note_acc.tempo_microseconds(tempo.as_int());
+            }
+            _ => {}
+        }
+    }
+
+    let (notes, tempo_changes) = note_acc.finish();
+    let control_events = ctrl_acc.finish();
+    (notes, tempo_changes, control_events)
+}
+
+/// Extract notes AND control events from a parsed `Smf`.
+///
+/// This is the `Smf`-based variant of [`extract_notes_and_control_events_from_bytes`].
+#[cfg(feature = "alloc")]
+pub fn extract_notes_and_control_events(
+    smf: &crate::Smf,
+) -> (Vec<PackedNote>, Vec<(u32, f32)>, Vec<PackedControlEvent>) {
+    let track_results: Vec<(Vec<PackedNote>, Vec<(u32, f32)>, Vec<PackedControlEvent>)> = {
+        #[cfg(feature = "parallel")]
+        {
+            smf.tracks
+                .par_iter()
+                .enumerate()
+                .map(|(track_idx, track)| parse_track_notes_and_control_events(track, track_idx as u16))
+                .collect()
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            smf.tracks
+                .iter()
+                .enumerate()
+                .map(|(track_idx, track)| parse_track_notes_and_control_events(track, track_idx as u16))
+                .collect()
+        }
+    };
+
+    let total_notes: usize = track_results.iter().map(|(n, _, _)| n.len()).sum();
+    let total_ctrl: usize = track_results.iter().map(|(_, _, c)| c.len()).sum();
+    let mut all_notes = Vec::with_capacity(total_notes);
+    let mut all_tempo_changes: Vec<(u32, f32)> = Vec::new();
+    let mut all_control_events = Vec::with_capacity(total_ctrl);
+
+    for (notes, tempo_changes, control_events) in track_results {
+        all_notes.extend(notes);
+        all_control_events.extend(control_events);
+        for tempo in tempo_changes {
+            if !all_tempo_changes.iter().any(|(t, _)| *t == tempo.0) {
+                all_tempo_changes.push(tempo);
+            }
+        }
+    }
+
+    if !all_tempo_changes.iter().any(|(t, _)| *t == 0) {
+        all_tempo_changes.push((0u32, 120.0f32));
+    }
+
+    all_tempo_changes.sort_unstable_by_key(|&(t, _)| t);
+    all_control_events.sort_unstable_by_key(|e| e.tick);
+    (all_notes, all_tempo_changes, all_control_events)
+}
+
 /// Extract notes directly from raw MIDI bytes without creating an intermediate `Smf`.
 ///
 /// This function provides the most memory-efficient way to extract notes from a MIDI file.
@@ -565,6 +806,77 @@ pub fn extract_notes_from_bytes(bytes: &[u8]) -> crate::Result<(Vec<PackedNote>,
     Ok((all_notes, all_tempo_changes))
 }
 
+/// Extract notes AND control events (CC / PC / PB) from raw MIDI bytes.
+///
+/// This is the control-event-aware variant of [`extract_notes_from_bytes`].
+/// It returns an additional `Vec<PackedControlEvent>` containing all
+/// ControlChange, ProgramChange and PitchBend events found in the file.
+///
+/// # Returns
+///
+/// A tuple of `(notes, tempo_changes, control_events)` where:
+/// - `notes` is a `Vec<PackedNote>` of all notes in the file
+/// - `tempo_changes` is a `Vec<(tick, bpm)>` of tempo change events
+/// - `control_events` is a `Vec<PackedControlEvent>` of CC/PC/PB events
+#[cfg(feature = "alloc")]
+pub fn extract_notes_and_control_events_from_bytes(
+    bytes: &[u8],
+) -> crate::Result<(Vec<PackedNote>, Vec<(u32, f32)>, Vec<PackedControlEvent>)> {
+    let (_header, tracks_count, _division, raw) = fast_midi::parse_header(bytes)?;
+    let tracks = fast_midi::iter_tracks_from_data(raw, tracks_count);
+
+    // Use parallel extraction if available
+    let track_results: Vec<(Vec<PackedNote>, Vec<(u32, f32)>, Vec<PackedControlEvent>)> = {
+        #[cfg(feature = "parallel")]
+        {
+            use rayon::prelude::*;
+            tracks
+                .into_par_iter()
+                .enumerate()
+                .map(|(track_idx, events)| {
+                    parse_fast_track_notes_and_control_events(events, track_idx as u16)
+                })
+                .collect()
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            tracks
+                .into_iter()
+                .enumerate()
+                .map(|(track_idx, events)| {
+                    parse_fast_track_notes_and_control_events(events, track_idx as u16)
+                })
+                .collect()
+        }
+    };
+
+    // Merge results
+    let total_notes: usize = track_results.iter().map(|(n, _, _)| n.len()).sum();
+    let total_ctrl: usize = track_results.iter().map(|(_, _, c)| c.len()).sum();
+    let mut all_notes = Vec::with_capacity(total_notes);
+    let mut all_tempo_changes: Vec<(u32, f32)> = Vec::new();
+    let mut all_control_events = Vec::with_capacity(total_ctrl);
+
+    for (notes, tempo_changes, control_events) in track_results {
+        all_notes.extend(notes);
+        all_control_events.extend(control_events);
+        for tempo in tempo_changes {
+            if !all_tempo_changes.iter().any(|(t, _)| *t == tempo.0) {
+                all_tempo_changes.push(tempo);
+            }
+        }
+    }
+
+    // MIDI default is 120 BPM; only insert default if no tempo at tick 0 exists
+    if !all_tempo_changes.iter().any(|(t, _)| *t == 0) {
+        all_tempo_changes.push((0u32, 120.0f32));
+    }
+
+    all_tempo_changes.sort_unstable_by_key(|&(t, _)| t);
+    all_control_events.sort_unstable_by_key(|e| e.tick);
+    Ok((all_notes, all_tempo_changes, all_control_events))
+}
+
 /// Parse events directly to notes without allocating intermediate TrackEvent structs.
 #[cfg(feature = "alloc")]
 fn parse_fast_track_notes(mut events: FastTrackIter, track_idx: u16) -> (Vec<PackedNote>, Vec<(u32, f32)>) {
@@ -589,6 +901,54 @@ fn parse_fast_track_notes(mut events: FastTrackIter, track_idx: u16) -> (Vec<Pac
     }
 
     acc.finish()
+}
+
+/// Parse events to notes AND control events (CC / PC / PB) without allocating intermediate TrackEvent structs.
+#[cfg(feature = "alloc")]
+fn parse_fast_track_notes_and_control_events(
+    mut events: FastTrackIter,
+    track_idx: u16,
+) -> (
+    Vec<PackedNote>,
+    Vec<(u32, f32)>,
+    Vec<PackedControlEvent>,
+) {
+    let mut note_acc = NoteAccumulator::new(track_idx);
+    let mut ctrl_acc = ControlEventAccumulator::new(track_idx);
+
+    while let Some((delta, event)) = events.next_event() {
+        note_acc.advance(delta);
+        ctrl_acc.advance(delta);
+
+        match event {
+            MidiEvent::NoteOn { key, velocity, .. } => note_acc.note_on(key, velocity),
+            MidiEvent::NoteOff { key, .. } => note_acc.note_off(key),
+            MidiEvent::ControlChange {
+                channel,
+                controller,
+                value,
+            } => ctrl_acc.control_change(channel, controller, value),
+            MidiEvent::ProgramChange { channel, program } => {
+                ctrl_acc.program_change(channel, program)
+            }
+            MidiEvent::PitchBend { channel, bend } => {
+                ctrl_acc.pitch_bend(channel, bend)
+            }
+            MidiEvent::Meta { event_type: 0x51, data } => {
+                if data.len() == 3 {
+                    let microseconds = ((data[0] as u32) << 16)
+                        | ((data[1] as u32) << 8)
+                        | (data[2] as u32);
+                    note_acc.tempo_microseconds(microseconds);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let (notes, tempo_changes) = note_acc.finish();
+    let control_events = ctrl_acc.finish();
+    (notes, tempo_changes, control_events)
 }
 
 // ============================================================================

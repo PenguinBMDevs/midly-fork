@@ -248,7 +248,10 @@ pub use crate::mmap::{FileStats, MmapEventIter, MmapSmf, MmapTrack};
 
 /// High-performance note extraction and streaming loader exports.
 #[cfg(feature = "alloc")]
-pub use crate::loader::{extract_notes, extract_notes_from_bytes, extract_notes_indexed, NoteIndex, PackedNote};
+pub use crate::loader::{
+    extract_notes, extract_notes_and_control_events, extract_notes_and_control_events_from_bytes,
+    extract_notes_from_bytes, extract_notes_indexed, NoteIndex, PackedControlEvent, PackedNote,
+};
 
 #[cfg(all(feature = "std", feature = "memmap"))]
 pub use crate::loader::StreamingNoteLoader;
