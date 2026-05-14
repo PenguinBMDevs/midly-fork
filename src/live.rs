@@ -64,7 +64,7 @@ impl<'a> LiveEvent<'a> {
         match status {
             0x80..=0xEF => {
                 // MIDI message
-                let data = MidiMessage::get_data_u7(status, data)?;
+                let data = MidiMessage::get_data_bytes(status, data)?;
                 let (channel, message) = MidiMessage::read(status, data);
                 Ok(LiveEvent::Midi { channel, message })
             }

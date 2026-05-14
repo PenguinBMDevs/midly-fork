@@ -280,7 +280,7 @@ pub(crate) fn scan_track_notes_only(
 ) -> (u64, u32, Vec<(u32, f32)>) {
     let mut note_count = 0u64;
     let mut tempo_changes = Vec::new();
-    let mut active_notes = [false; 128];
+    let mut active_notes = [false; 256];
     let mut offset = 0usize;
     let mut current_tick = 0u32;
     let mut last_status = 0u8;
@@ -311,9 +311,9 @@ pub(crate) fn scan_track_notes_only(
                 if offset + 2 > len {
                     break;
                 }
-                let key = (data[offset] & 0x7F) as usize;
+                let key = data[offset] as usize;
                 offset += 2;
-                if key < 128 && active_notes[key] {
+                if key < 256 && active_notes[key] {
                     active_notes[key] = false;
                     note_count += 1;
                 }
@@ -322,17 +322,17 @@ pub(crate) fn scan_track_notes_only(
                 if offset + 2 > len {
                     break;
                 }
-                let key = (data[offset] & 0x7F) as usize;
+                let key = data[offset] as usize;
                 let vel = data[offset + 1];
                 offset += 2;
                 if vel > 0 {
-                    if key < 128 {
+                    if key < 256 {
                         if active_notes[key] {
                             note_count += 1;
                         }
                         active_notes[key] = true;
                     }
-                } else if key < 128 && active_notes[key] {
+                } else if key < 256 && active_notes[key] {
                     active_notes[key] = false;
                     note_count += 1;
                 }
