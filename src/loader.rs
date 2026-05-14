@@ -172,7 +172,7 @@ impl PackedNote {
         Self {
             start_tick,
             end_tick,
-            key: key & 0x7F,
+            key,
             velocity: velocity & 0x7F,
             track,
         }
@@ -347,7 +347,7 @@ struct ActiveNote {
 struct NoteAccumulator {
     notes: Vec<PackedNote>,
     tempo_changes: Vec<(u32, f32)>,
-    active_notes: [Option<(u32, u8)>; 128],
+    active_notes: [Option<(u32, u8)>; 256],
     current_tick: u32,
     track_idx: u16,
 }
@@ -358,7 +358,7 @@ impl NoteAccumulator {
         Self {
             notes: Vec::with_capacity(512),
             tempo_changes: Vec::new(),
-            active_notes: [None; 128],
+            active_notes: [None; 256],
             current_tick: 0,
             track_idx,
         }
@@ -371,7 +371,7 @@ impl NoteAccumulator {
 
     fn note_on(&mut self, key: u8, velocity: u8) {
         let key_idx = key as usize;
-        if key_idx >= 128 {
+        if key_idx >= 256 {
             return;
         }
 
@@ -392,7 +392,7 @@ impl NoteAccumulator {
 
     fn note_off(&mut self, key: u8) {
         let key_idx = key as usize;
-        if key_idx >= 128 {
+        if key_idx >= 256 {
             return;
         }
         if let Some((start_tick, velocity)) = self.active_notes[key_idx].take() {
@@ -414,7 +414,7 @@ impl NoteAccumulator {
     }
 
     fn finish(mut self) -> (Vec<PackedNote>, Vec<(u32, f32)>) {
-        for key in 0..128 {
+        for key in 0..256 {
             if let Some((start_tick, velocity)) = self.active_notes[key].take() {
                 self.notes.push(PackedNote::new(
                     start_tick,
@@ -498,7 +498,7 @@ impl ControlEventAccumulator {
 pub struct NoteTrackCursor<'a> {
     #[allow(dead_code)]
     events: crate::smf::EventIter<'a>,
-    active_notes: [Option<ActiveNote>; 128],
+    active_notes: [Option<ActiveNote>; 256],
     current_tick: u32,
     track_idx: u16,
 }
@@ -509,7 +509,7 @@ impl<'a> NoteTrackCursor<'a> {
     pub fn new(events: crate::smf::EventIter<'a>, track_idx: u16) -> Self {
         Self {
             events,
-            active_notes: [None; 128],
+            active_notes: [None; 256],
             current_tick: 0,
             track_idx,
         }
@@ -524,7 +524,7 @@ impl<'a> NoteTrackCursor<'a> {
     /// Close all active notes, returning them as completed notes.
     pub fn close_all_notes(&mut self) -> Vec<PackedNote> {
         let mut completed = Vec::new();
-        for key in 0..128 {
+        for key in 0..256 {
             if let Some(active) = self.active_notes[key].take() {
                 completed.push(PackedNote::new(
                     active.start_tick,
@@ -621,9 +621,9 @@ fn parse_track_notes(track: &[TrackEvent], track_idx: u16) -> (Vec<PackedNote>, 
         match &event.kind {
             TrackEventKind::Midi { channel: _, message } => match message {
                 MidiMessage::NoteOn { key, vel } => {
-                    acc.note_on(key.as_int(), vel.as_int());
+                    acc.note_on(*key, vel.as_int());
                 }
-                MidiMessage::NoteOff { key, vel: _ } => acc.note_off(key.as_int()),
+                MidiMessage::NoteOff { key, vel: _ } => acc.note_off(*key),
                 _ => {}
             },
             TrackEventKind::Meta(MetaMessage::Tempo(tempo)) => {
@@ -652,9 +652,9 @@ fn parse_track_notes_and_control_events(
         match &event.kind {
             TrackEventKind::Midi { channel, message } => match message {
                 MidiMessage::NoteOn { key, vel } => {
-                    note_acc.note_on(key.as_int(), vel.as_int());
+                    note_acc.note_on(*key, vel.as_int());
                 }
-                MidiMessage::NoteOff { key, vel: _ } => note_acc.note_off(key.as_int()),
+                MidiMessage::NoteOff { key, vel: _ } => note_acc.note_off(*key),
                 MidiMessage::Controller { controller, value } => {
                     ctrl_acc.control_change(
                         channel.as_int(),
@@ -1036,7 +1036,7 @@ pub struct StreamingNoteLoader {
     parsed_until: u32,
 
     // State tracking
-    active_notes: Vec<[Option<ActiveNote>; 128]>,
+    active_notes: Vec<[Option<ActiveNote>; 256]>,
 
     // Finished notes cache with bounds
     finished_notes: VecDeque<PackedNote>,
@@ -1044,7 +1044,7 @@ pub struct StreamingNoteLoader {
 
     // Reusable frame output
     frame_notes: Vec<PackedNote>,
-    active_keys: [Option<u16>; 128],
+    active_keys: [Option<u16>; 256],
 }
 
 #[cfg(all(feature = "std", feature = "memmap"))]
@@ -1122,11 +1122,11 @@ impl StreamingNoteLoader {
             cursors,
             heap,
             parsed_until: 0,
-            active_notes: vec![[None; 128]; num_tracks],
+            active_notes: vec![[None; 256]; num_tracks],
             finished_notes: VecDeque::new(),
             max_finished_notes: 32_768,
             frame_notes: Vec::with_capacity(2048),
-            active_keys: [None; 128],
+            active_keys: [None; 256],
         })
     }
 
@@ -1231,13 +1231,13 @@ impl StreamingNoteLoader {
         }
 
         // Compute active keys
-        self.active_keys = [None; 128];
+        self.active_keys = [None; 256];
         for note in &self.frame_notes {
             let start = note.start_tick as f32;
             let end = note.end_tick as f32;
             if start <= current_tick && end >= current_tick {
                 let k = note.key as usize;
-                if k < 128 {
+                if k < 256 {
                     self.active_keys[k] = Some(note.track);
                 }
             }
@@ -1279,7 +1279,7 @@ impl StreamingNoteLoader {
         match event {
             MidiEvent::NoteOn { key, velocity, .. } => {
                 let key_idx = key as usize;
-                if key_idx < 128 && track_idx < self.active_notes.len() {
+                if key_idx < 256 && track_idx < self.active_notes.len() {
                     if let Some(active) = self.active_notes[track_idx][key_idx].take() {
                         self.finish_note(track_idx, key_idx, active, tick);
                     }
@@ -1293,7 +1293,7 @@ impl StreamingNoteLoader {
             }
             MidiEvent::NoteOff { key, .. } => {
                 let key_idx = key as usize;
-                if key_idx < 128 && track_idx < self.active_notes.len() {
+                if key_idx < 256 && track_idx < self.active_notes.len() {
                     if let Some(active) = self.active_notes[track_idx][key_idx].take() {
                         self.finish_note(track_idx, key_idx, active, tick);
                     }
@@ -1708,7 +1708,7 @@ mod tests {
                         kind: TrackEventKind::Midi {
                             channel: u4::new(0),
                             message: MidiMessage::NoteOn {
-                                key: u7::new(60),
+                                key: 60u8,
                                 vel: u7::new(100),
                             },
                         },
@@ -1719,7 +1719,7 @@ mod tests {
                         kind: TrackEventKind::Midi {
                             channel: u4::new(0),
                             message: MidiMessage::NoteOff {
-                                key: u7::new(60),
+                                key: 60u8,
                                 vel: u7::new(0),
                             },
                         },
@@ -1746,5 +1746,86 @@ mod tests {
         // Should have default tempo
         assert_eq!(tempo_changes.len(), 1);
         assert_eq!(tempo_changes[0], (0, 120.0));
+    }
+
+    #[test]
+    fn test_256_key_roundtrip() {
+        // Build a track with all 256 keys (0-255), each with NoteOn + NoteOff
+        let mut events = Vec::with_capacity(512);
+        for key in 0..=255u8 {
+            events.push(TrackEvent {
+                delta: u28::new(0),
+                kind: TrackEventKind::Midi {
+                    channel: u4::new(0),
+                    message: MidiMessage::NoteOn {
+                        key,
+                        vel: u7::new(100),
+                    },
+                },
+            });
+            events.push(TrackEvent {
+                delta: u28::new(480),
+                kind: TrackEventKind::Midi {
+                    channel: u4::new(0),
+                    message: MidiMessage::NoteOff {
+                        key,
+                        vel: u7::new(0),
+                    },
+                },
+            });
+        }
+
+        let smf = crate::Smf {
+            header: crate::smf::Header {
+                format: Format::Parallel,
+                timing: Timing::Metrical(u15::new(480)),
+            },
+            tracks: vec![events],
+        };
+
+        // Write to bytes
+        let mut bytes = Vec::new();
+        smf.write(&mut bytes).expect("write failed");
+
+        // Parse back via Smf::parse
+        let parsed = crate::Smf::parse(&bytes).expect("parse failed");
+
+        // Collect all NoteOn keys
+        let mut parsed_keys: Vec<u8> = Vec::new();
+        for track in &parsed.tracks {
+            for event in track {
+                if let TrackEventKind::Midi {
+                    message: MidiMessage::NoteOn { key, .. },
+                    ..
+                } = &event.kind
+                {
+                    parsed_keys.push(*key);
+                }
+            }
+        }
+
+        // Verify all 256 keys are present and correct
+        assert_eq!(parsed_keys.len(), 256, "should have 256 NoteOn events");
+        let mut sorted = parsed_keys.clone();
+        sorted.sort();
+        for (i, &key) in sorted.iter().enumerate() {
+            assert_eq!(key, i as u8, "key mismatch at position {}", i);
+        }
+
+        // Verify via extract_notes_from_bytes (fast path)
+        let (notes, _tempo) = crate::loader::extract_notes_from_bytes(&bytes)
+            .expect("extract_notes_from_bytes failed");
+        assert_eq!(notes.len(), 256, "fast path should extract 256 notes");
+        let mut fast_keys: Vec<u8> = notes.iter().map(|n| n.key).collect();
+        fast_keys.sort();
+        for (i, &key) in fast_keys.iter().enumerate() {
+            assert_eq!(key, i as u8, "fast path key mismatch at position {}", i);
+        }
+
+        // Verify keys > 127 are preserved (not masked to 7-bit)
+        let has_extended = parsed_keys.iter().any(|&k| k > 127);
+        assert!(has_extended, "should contain keys > 127 in 256-key mode");
+        let has_extended_fast = fast_keys.iter().any(|&k| k > 127);
+        assert!(has_extended_fast, "fast path should contain keys > 127");
     }
 }

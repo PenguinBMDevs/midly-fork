@@ -134,7 +134,7 @@ impl<'a> TrackEventKind<'a> {
         if status < 0xF0 {
             // MIDI message (0x80-0xEF)
             *running_status = Some(status);
-            let data = MidiMessage::read_data_u8(status, raw)?;
+            let data = MidiMessage::read_data_bytes(status, raw)?;
             let (channel, message) = MidiMessage::read(status, data);
             return Ok(TrackEventKind::Midi { channel, message });
         }
@@ -250,15 +250,15 @@ impl<'a> TrackEventKind<'a> {
 pub enum MidiMessage {
     /// Stop playing a note.
     NoteOff {
-        /// The MIDI key to stop playing.
-        key: u7,
+        /// The MIDI key to stop playing (0-255, supports extended 256-key range).
+        key: u8,
         /// The velocity with which to stop playing it.
         vel: u7,
     },
     /// Start playing a note.
     NoteOn {
-        /// The key to start playing.
-        key: u7,
+        /// The key to start playing (0-255, supports extended 256-key range).
+        key: u8,
         /// The velocity (strength) with which to press it.
         ///
         /// Note that by convention a `NoteOn` message with a velocity of 0 is equivalent to a
@@ -305,8 +305,10 @@ impl MidiMessage {
     }
 
     /// Extract the data bytes from a raw slice.
+    /// Returns raw bytes without 7-bit masking, allowing extended key values (0-255)
+    /// for NoteOn/NoteOff messages.
     #[inline(always)]
-    pub(crate) fn read_data_u8(status: u8, raw: &mut &[u8]) -> Result<[u7; 2]> {
+    pub(crate) fn read_data_bytes(status: u8, raw: &mut &[u8]) -> Result<[u8; 2]> {
         let len = Self::msg_length(status);
         let raw_len = raw.len();
 
@@ -318,13 +320,20 @@ impl MidiMessage {
         unsafe {
             let ptr = raw.as_ptr();
             let result = match len {
-                1 => [u7::from(*ptr), u7::from(0)],
-                2 => [u7::from(*ptr), u7::from(*ptr.add(1))],
-                _ => [u7::from(0), u7::from(0)],
+                1 => [*ptr, 0],
+                2 => [*ptr, *ptr.add(1)],
+                _ => [0, 0],
             };
             *raw = core::slice::from_raw_parts(ptr.add(len), raw_len - len);
             Ok(result)
         }
+    }
+
+    /// Legacy wrapper for backwards compatibility. Converts raw bytes to u7.
+    #[inline(always)]
+    pub(crate) fn read_data_u8(status: u8, raw: &mut &[u8]) -> Result<[u7; 2]> {
+        let raw = Self::read_data_bytes(status, raw)?;
+        Ok([u7::from(raw[0]), u7::from(raw[1])])
     }
 
     /// Get the data bytes from a databyte slice.
@@ -338,35 +347,46 @@ impl MidiMessage {
         })
     }
 
+    /// Get raw data bytes from a u7 slice (no 7-bit masking).
+    pub(crate) fn get_data_bytes(status: u8, data: &[u7]) -> Result<[u8; 2]> {
+        let len = Self::msg_length(status);
+        ensure!(data.len() >= len, err_invalid!("truncated midi message"));
+        Ok(match len {
+            1 => [data[0].as_int(), 0],
+            2 => [data[0].as_int(), data[1].as_int()],
+            _ => [0, 0],
+        })
+    }
+
     /// Receives status byte and midi args separately.
     ///
     /// Panics if the `status` is not a MIDI message status (0x80..=0xEF).
-    pub(crate) fn read(status: u8, data: [u7; 2]) -> (u4, MidiMessage) {
+    pub(crate) fn read(status: u8, data: [u8; 2]) -> (u4, MidiMessage) {
         let channel = u4::from(status);
         let msg = match status >> 4 {
             0x8 => MidiMessage::NoteOff {
                 key: data[0],
-                vel: data[1],
+                vel: u7::from(data[1]),
             },
             0x9 => MidiMessage::NoteOn {
                 key: data[0],
-                vel: data[1],
+                vel: u7::from(data[1]),
             },
             0xA => MidiMessage::Aftertouch {
-                key: data[0],
-                vel: data[1],
+                key: u7::from(data[0]),
+                vel: u7::from(data[1]),
             },
             0xB => MidiMessage::Controller {
-                controller: data[0],
-                value: data[1],
+                controller: u7::from(data[0]),
+                value: u7::from(data[1]),
             },
-            0xC => MidiMessage::ProgramChange { program: data[0] },
-            0xD => MidiMessage::ChannelAftertouch { vel: data[0] },
+            0xC => MidiMessage::ProgramChange { program: u7::from(data[0]) },
+            0xD => MidiMessage::ChannelAftertouch { vel: u7::from(data[0]) },
             0xE => {
                 //Note the little-endian order, contrasting with the default big-endian order of
                 //Standard Midi Files
-                let lsb = data[0].as_int() as u16;
-                let msb = data[1].as_int() as u16;
+                let lsb = data[0] as u16;
+                let msb = data[1] as u16;
                 MidiMessage::PitchBend {
                     bend: PitchBend(u14::from(msb << 7 | lsb)),
                 }
@@ -390,8 +410,8 @@ impl MidiMessage {
     /// Write the data part of this message, not including the status.
     pub(crate) fn write<W: Write>(&self, out: &mut W) -> WriteResult<W> {
         match self {
-            MidiMessage::NoteOff { key, vel } => out.write(&[key.as_int(), vel.as_int()])?,
-            MidiMessage::NoteOn { key, vel } => out.write(&[key.as_int(), vel.as_int()])?,
+            MidiMessage::NoteOff { key, vel } => out.write(&[*key, vel.as_int()])?,
+            MidiMessage::NoteOn { key, vel } => out.write(&[*key, vel.as_int()])?,
             MidiMessage::Aftertouch { key, vel } => out.write(&[key.as_int(), vel.as_int()])?,
             MidiMessage::Controller { controller, value } => {
                 out.write(&[controller.as_int(), value.as_int()])?
