@@ -1747,4 +1747,85 @@ mod tests {
         assert_eq!(tempo_changes.len(), 1);
         assert_eq!(tempo_changes[0], (0, 120.0));
     }
+
+    #[test]
+    fn test_256_key_roundtrip() {
+        // Build a track with all 256 keys (0-255), each with NoteOn + NoteOff
+        let mut events = Vec::with_capacity(512);
+        for key in 0..=255u8 {
+            events.push(TrackEvent {
+                delta: u28::new(0),
+                kind: TrackEventKind::Midi {
+                    channel: u4::new(0),
+                    message: MidiMessage::NoteOn {
+                        key,
+                        vel: u7::new(100),
+                    },
+                },
+            });
+            events.push(TrackEvent {
+                delta: u28::new(480),
+                kind: TrackEventKind::Midi {
+                    channel: u4::new(0),
+                    message: MidiMessage::NoteOff {
+                        key,
+                        vel: u7::new(0),
+                    },
+                },
+            });
+        }
+
+        let smf = crate::Smf {
+            header: crate::smf::Header {
+                format: Format::Parallel,
+                timing: Timing::Metrical(u15::new(480)),
+            },
+            tracks: vec![events],
+        };
+
+        // Write to bytes
+        let mut bytes = Vec::new();
+        smf.write(&mut bytes).expect("write failed");
+
+        // Parse back via Smf::parse
+        let parsed = crate::Smf::parse(&bytes).expect("parse failed");
+
+        // Collect all NoteOn keys
+        let mut parsed_keys: Vec<u8> = Vec::new();
+        for track in &parsed.tracks {
+            for event in track {
+                if let TrackEventKind::Midi {
+                    message: MidiMessage::NoteOn { key, .. },
+                    ..
+                } = &event.kind
+                {
+                    parsed_keys.push(*key);
+                }
+            }
+        }
+
+        // Verify all 256 keys are present and correct
+        assert_eq!(parsed_keys.len(), 256, "should have 256 NoteOn events");
+        let mut sorted = parsed_keys.clone();
+        sorted.sort();
+        for (i, &key) in sorted.iter().enumerate() {
+            assert_eq!(key, i as u8, "key mismatch at position {}", i);
+        }
+
+        // Verify via extract_notes_from_bytes (fast path)
+        let (notes, _tempo) = crate::loader::extract_notes_from_bytes(&bytes)
+            .expect("extract_notes_from_bytes failed");
+        assert_eq!(notes.len(), 256, "fast path should extract 256 notes");
+        let mut fast_keys: Vec<u8> = notes.iter().map(|n| n.key).collect();
+        fast_keys.sort();
+        for (i, &key) in fast_keys.iter().enumerate() {
+            assert_eq!(key, i as u8, "fast path key mismatch at position {}", i);
+        }
+
+        // Verify keys > 127 are preserved (not masked to 7-bit)
+        let has_extended = parsed_keys.iter().any(|&k| k > 127);
+        assert!(has_extended, "should contain keys > 127 in 256-key mode");
+        let has_extended_fast = fast_keys.iter().any(|&k| k > 127);
+        assert!(has_extended_fast, "fast path should contain keys > 127");
+    }
 }
