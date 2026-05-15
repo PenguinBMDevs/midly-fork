@@ -1,8 +1,4 @@
-use std::{
-    env,
-    path::Path,
-    time::Instant,
-};
+use std::{env, path::Path, time::Instant};
 
 const DEFAULT_MIDI_PATH: &str = "test-asset/Funky Stars Black Redone.mid";
 
@@ -81,12 +77,14 @@ fn main() {
         std::process::exit(1);
     }
 
-    let file_size = std::fs::metadata(path)
-        .map(|m| m.len())
-        .unwrap_or(0);
+    let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
 
     eprintln!("=== MIDI Benchmark ===");
-    eprintln!("File: {} ({:.1} MB)", path.display(), file_size as f64 / (1024.0 * 1024.0));
+    eprintln!(
+        "File: {} ({:.1} MB)",
+        path.display(),
+        file_size as f64 / (1024.0 * 1024.0)
+    );
     eprintln!();
 
     print_memory("startup");

@@ -6,7 +6,7 @@
 use crate::{
     event::{MetaMessage, MidiMessage, TrackEvent, TrackEventKind},
     prelude::*,
-    primitive::{u28, u7, Format, Timing},
+    primitive::{Format, Timing, u7, u28},
     smf::Header,
 };
 
@@ -280,8 +280,14 @@ fn parse_channel_message<'a>(
             *data = &data[2..];
 
             let message = match msg_type {
-                0x8 => MidiMessage::NoteOff { key: data[0], vel: u7::new(data[1]) },
-                0x9 => MidiMessage::NoteOn { key: data[0], vel: u7::new(data[1]) },
+                0x8 => MidiMessage::NoteOff {
+                    key: data[0],
+                    vel: u7::new(data[1]),
+                },
+                0x9 => MidiMessage::NoteOn {
+                    key: data[0],
+                    vel: u7::new(data[1]),
+                },
                 0xA => MidiMessage::Aftertouch { key: b1, vel: b2 },
                 0xB => MidiMessage::Controller {
                     controller: b1,
@@ -492,7 +498,7 @@ fn parse_header_tracks(data: &[u8]) -> crate::Result<(Header, Vec<&[u8]>)> {
         _ => {
             return Err(crate::Error::new(&crate::ErrorKind::Invalid(
                 "invalid MIDI format",
-            )))
+            )));
         }
     };
 
@@ -518,7 +524,7 @@ fn parse_header_tracks(data: &[u8]) -> crate::Result<(Header, Vec<&[u8]>)> {
 
     // Parse tracks
     let mut pos = 8 + 4 + header_len; // MThd + length + header data
-                                      // Cap pre-allocation to avoid huge allocations from malformed headers
+    // Cap pre-allocation to avoid huge allocations from malformed headers
     let max_tracks_possible = data.len().saturating_sub(pos) / 8;
     if cfg!(feature = "strict") && (num_tracks as usize) > max_tracks_possible {
         return Err(crate::Error::new(&crate::ErrorKind::Malformed(

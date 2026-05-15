@@ -4,9 +4,9 @@
 use alloc::vec::Vec;
 
 use crate::{
+    ErrorKind,
     error::Result,
     primitive::{Format, Fps, Timing, u15},
-    ErrorKind,
 };
 
 use core::convert::TryInto;
@@ -17,12 +17,33 @@ use crate::riff;
 /// A lightweight MIDI event used by the fast parser.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum MidiEvent<'a> {
-    NoteOn { _channel: u8, key: u8, velocity: u8 },
-    NoteOff { _channel: u8, key: u8, _velocity: u8 },
-    ControlChange { channel: u8, controller: u8, value: u8 },
-    ProgramChange { channel: u8, program: u8 },
-    PitchBend { channel: u8, bend: u16 },
-    Meta { event_type: u8, data: &'a [u8] },
+    NoteOn {
+        _channel: u8,
+        key: u8,
+        velocity: u8,
+    },
+    NoteOff {
+        _channel: u8,
+        key: u8,
+        _velocity: u8,
+    },
+    ControlChange {
+        channel: u8,
+        controller: u8,
+        value: u8,
+    },
+    ProgramChange {
+        channel: u8,
+        program: u8,
+    },
+    PitchBend {
+        channel: u8,
+        bend: u16,
+    },
+    Meta {
+        event_type: u8,
+        data: &'a [u8],
+    },
     Other,
 }
 
@@ -70,10 +91,16 @@ impl<'a> TrackIter<'a> {
             0x80 => {
                 let (key, vel) = if self.offset + 2 <= len {
                     unsafe {
-                        (*self.data.get_unchecked(self.offset), *self.data.get_unchecked(self.offset + 1))
+                        (
+                            *self.data.get_unchecked(self.offset),
+                            *self.data.get_unchecked(self.offset + 1),
+                        )
                     }
                 } else {
-                    (self.data.get(self.offset).copied().unwrap_or(0), self.data.get(self.offset + 1).copied().unwrap_or(0))
+                    (
+                        self.data.get(self.offset).copied().unwrap_or(0),
+                        self.data.get(self.offset + 1).copied().unwrap_or(0),
+                    )
                 };
                 self.offset = self.offset.saturating_add(2);
                 MidiEvent::NoteOff {
@@ -85,10 +112,16 @@ impl<'a> TrackIter<'a> {
             0x90 => {
                 let (key, velocity) = if self.offset + 2 <= len {
                     unsafe {
-                        (*self.data.get_unchecked(self.offset), *self.data.get_unchecked(self.offset + 1))
+                        (
+                            *self.data.get_unchecked(self.offset),
+                            *self.data.get_unchecked(self.offset + 1),
+                        )
                     }
                 } else {
-                    (self.data.get(self.offset).copied().unwrap_or(0), self.data.get(self.offset + 1).copied().unwrap_or(0))
+                    (
+                        self.data.get(self.offset).copied().unwrap_or(0),
+                        self.data.get(self.offset + 1).copied().unwrap_or(0),
+                    )
                 };
                 self.offset = self.offset.saturating_add(2);
                 if velocity == 0 {
@@ -275,9 +308,7 @@ fn read_vlq_at(data: &[u8], offset: &mut usize) -> u32 {
 
 /// Scan a single track buffer for note count, max tick and tempo only. No MidiEvent allocation.
 #[cfg(feature = "std")]
-pub(crate) fn scan_track_notes_only(
-    data: &[u8],
-) -> (u64, u32, Vec<(u32, f32)>) {
+pub(crate) fn scan_track_notes_only(data: &[u8]) -> (u64, u32, Vec<(u32, f32)>) {
     let mut note_count = 0u64;
     let mut tempo_changes = Vec::new();
     let mut active_notes = [false; 256];
@@ -410,13 +441,19 @@ pub(crate) fn parse_header<'a>(raw: &'a [u8]) -> Result<(crate::smf::Header, u16
         let fps_raw = ((division_raw >> 8) & 0xFF) as u8;
         let fps = (-(fps_raw as i8)) as u8;
         let subframe = (division_raw & 0xFF) as u8;
-        let fps = Fps::from_int(fps).ok_or_else(|| crate::Error::new(err_invalid!("invalid smpte fps")))?;
+        let fps = Fps::from_int(fps)
+            .ok_or_else(|| crate::Error::new(err_invalid!("invalid smpte fps")))?;
         Timing::Timecode(fps, subframe)
     } else {
         Timing::Metrical(u15::from(division_raw & 0x7FFF))
     };
 
-    Ok((crate::smf::Header { format, timing }, tracks_count, division_raw, raw))
+    Ok((
+        crate::smf::Header { format, timing },
+        tracks_count,
+        division_raw,
+        raw,
+    ))
 }
 
 /// Iterate tracks from raw SMF data.
@@ -433,14 +470,16 @@ pub(crate) fn iter_tracks_from_data<'a>(data: &'a [u8], tracks_count: u16) -> Ve
             if offset + 8 > data.len() {
                 break;
             }
-            let len = u32::from_be_bytes(data[offset + 4..offset + 8].try_into().unwrap_or([0; 4])) as usize;
+            let len = u32::from_be_bytes(data[offset + 4..offset + 8].try_into().unwrap_or([0; 4]))
+                as usize;
             offset = offset.saturating_add(8 + len);
         }
         if offset + 8 > data.len() {
             break;
         }
 
-        let len = u32::from_be_bytes(data[offset + 4..offset + 8].try_into().unwrap_or([0; 4])) as usize;
+        let len =
+            u32::from_be_bytes(data[offset + 4..offset + 8].try_into().unwrap_or([0; 4])) as usize;
         let end = (offset + 8 + len).min(data.len());
         let track_data = &data[offset + 8..end];
         tracks.push(TrackIter::new(track_data));

@@ -5,8 +5,8 @@ use std::time::Duration;
 mod imp {
     use super::*;
     use std::sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     };
     use std::thread::{self, JoinHandle};
 
@@ -27,7 +27,10 @@ mod imp {
                 let pid = match get_current_pid() {
                     Ok(pid) => pid,
                     Err(_) => {
-                        eprintln!("[midly memory] {}: failed to get PID, stopping reporter", label);
+                        eprintln!(
+                            "[midly memory] {}: failed to get PID, stopping reporter",
+                            label
+                        );
                         return;
                     }
                 };
@@ -114,4 +117,4 @@ mod imp {
     pub fn print_memory_usage(_: &str) {}
 }
 
-pub use imp::{print_memory_usage, MemoryReporter};
+pub use imp::{MemoryReporter, print_memory_usage};

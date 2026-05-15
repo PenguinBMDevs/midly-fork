@@ -40,7 +40,7 @@ fn main() {
             return;
         }
     };
-    
+
     // Use BufReader with a large buffer for performance
     let mut reader = BufReader::with_capacity(1024 * 1024, input_file);
 
@@ -66,19 +66,25 @@ fn process_midi<R: Read + Seek, W: Write + Seek>(reader: &mut R, writer: &mut W)
     // 1. Read Header
     let mut header_chunk = [0u8; 14];
     reader.read_exact(&mut header_chunk)?;
-    
+
     if &header_chunk[0..4] != b"MThd" {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "Not a valid MIDI file (missing MThd)"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Not a valid MIDI file (missing MThd)",
+        ));
     }
-    
+
     let header_len = u32::from_be_bytes(header_chunk[4..8].try_into().unwrap());
     if header_len != 6 {
-         // Some files might have larger headers, skip extra
-         if header_len < 6 {
-             return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid MThd length"));
-         }
+        // Some files might have larger headers, skip extra
+        if header_len < 6 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Invalid MThd length",
+            ));
+        }
     }
-    
+
     // Write Header to output
     writer.write_all(b"MThd")?;
     writer.write_all(&6u32.to_be_bytes())?;
@@ -94,10 +100,10 @@ fn process_midi<R: Read + Seek, W: Write + Seek>(reader: &mut R, writer: &mut W)
         // Read Chunk Header
         let mut chunk_head = [0u8; 8];
         if let Err(_) = reader.read_exact(&mut chunk_head) {
-             // EOF likely
-             break; 
+            // EOF likely
+            break;
         }
-        
+
         let tag = &chunk_head[0..4];
         let len = u32::from_be_bytes(chunk_head[4..8].try_into().unwrap());
 
@@ -108,12 +114,16 @@ fn process_midi<R: Read + Seek, W: Write + Seek>(reader: &mut R, writer: &mut W)
             reader.seek(SeekFrom::Current(len as i64))?;
         }
     }
-    
+
     writer.flush()?;
     Ok(())
 }
 
-fn process_track<R: Read, W: Write + Seek>(reader: &mut R, writer: &mut W, len: u32) -> io::Result<()> {
+fn process_track<R: Read, W: Write + Seek>(
+    reader: &mut R,
+    writer: &mut W,
+    len: u32,
+) -> io::Result<()> {
     writer.write_all(b"MTrk")?;
     let len_pos = writer.stream_position()?;
     writer.write_all(&0u32.to_be_bytes())?; // Placeholder for length
@@ -121,30 +131,36 @@ fn process_track<R: Read, W: Write + Seek>(reader: &mut R, writer: &mut W, len: 
 
     let mut parser = TrackParser::new(reader.take(len as u64));
     let mut writer_state = TrackWriterState::new();
-    
-    // Need to track bytes read to ensure we don't go past `len`? 
+
+    // Need to track bytes read to ensure we don't go past `len`?
     // `reader.take(len)` handles that!
 
     while let Some(event_res) = parser.next_event() {
         let event = event_res?;
-        
+
         // Logic:
         // 1. Accumulate Delta.
         // 2. Check Event Type.
         // 3. Filter Low Velocity NoteOn.
         // 4. Handle Overlap.
-        
+
         writer_state.accumulate_delta(event.delta);
 
         match event.kind {
-            RawEventKind::Midi { status, data1, data2 } => {
+            RawEventKind::Midi {
+                status,
+                data1,
+                data2,
+            } => {
                 let msg_type = status & 0xF0;
                 let ch = (status & 0x0F) as usize;
-                
-                if msg_type == 0x90 { // NoteOn
+
+                if msg_type == 0x90 {
+                    // NoteOn
                     let vel = data2.unwrap_or(0);
                     let key = data1;
-                    if vel > 10 { // Filter quiet notes (vel <= 10)
+                    if vel > 10 {
+                        // Filter quiet notes (vel <= 10)
                         writer_state.handle_note_on(ch, key, vel, status, writer)?;
                     } else if vel == 0 {
                         // NoteOn(0) is NoteOff
@@ -152,7 +168,8 @@ fn process_track<R: Read, W: Write + Seek>(reader: &mut R, writer: &mut W, len: 
                     } else {
                         // vel is 1..10, skip (filtered)
                     }
-                } else if msg_type == 0x80 { // NoteOff
+                } else if msg_type == 0x80 {
+                    // NoteOff
                     let vel = data2.unwrap_or(0);
                     let key = data1;
                     writer_state.handle_note_off(ch, key, vel, writer)?;
@@ -221,20 +238,27 @@ impl TrackWriterState {
         Ok(())
     }
 
-    fn handle_note_on<W: Write>(&mut self, ch: usize, key: u8, vel: u8, _status: u8, writer: &mut W) -> io::Result<()> {
+    fn handle_note_on<W: Write>(
+        &mut self,
+        ch: usize,
+        key: u8,
+        vel: u8,
+        _status: u8,
+        writer: &mut W,
+    ) -> io::Result<()> {
         if self.active_notes[ch][key as usize] {
             // Overlap! Cut previous note.
             self.write_pending_delta(writer)?;
-            
+
             // Write NoteOff(key, 0) - Prefer NoteOn(0)
             let status_on = 0x90 | (ch as u8);
             if self.running_status == Some(status_on) {
                 writer.write_all(&[key, 0])?;
             } else {
-                 writer.write_all(&[status_on, key, 0])?;
-                 self.running_status = Some(status_on);
+                writer.write_all(&[status_on, key, 0])?;
+                self.running_status = Some(status_on);
             }
-            
+
             // New NoteOn
             // Delta is 0 now
             write_varlen(0, writer)?;
@@ -249,7 +273,7 @@ impl TrackWriterState {
             // No overlap, just write
             self.active_notes[ch][key as usize] = true;
             self.write_pending_delta(writer)?;
-            
+
             let status_on = 0x90 | (ch as u8);
             if self.running_status == Some(status_on) {
                 writer.write_all(&[key, vel])?;
@@ -261,15 +285,21 @@ impl TrackWriterState {
         Ok(())
     }
 
-    fn handle_note_off<W: Write>(&mut self, ch: usize, key: u8, vel: u8, writer: &mut W) -> io::Result<()> {
+    fn handle_note_off<W: Write>(
+        &mut self,
+        ch: usize,
+        key: u8,
+        vel: u8,
+        writer: &mut W,
+    ) -> io::Result<()> {
         if self.active_notes[ch][key as usize] {
             self.active_notes[ch][key as usize] = false;
             self.write_pending_delta(writer)?;
-            
+
             // Write NoteOff
             if vel == 0 {
                 let status_on = 0x90 | (ch as u8);
-                 if self.running_status == Some(status_on) {
+                if self.running_status == Some(status_on) {
                     writer.write_all(&[key, 0])?;
                 } else {
                     writer.write_all(&[status_on, key, 0])?;
@@ -291,7 +321,13 @@ impl TrackWriterState {
         Ok(())
     }
 
-    fn write_midi<W: Write>(&mut self, status: u8, data1: u8, maybe_data2: Option<u8>, writer: &mut W) -> io::Result<()> {
+    fn write_midi<W: Write>(
+        &mut self,
+        status: u8,
+        data1: u8,
+        maybe_data2: Option<u8>,
+        writer: &mut W,
+    ) -> io::Result<()> {
         if self.running_status != Some(status) {
             writer.write_all(&[status])?;
             self.running_status = Some(status);
@@ -316,17 +352,31 @@ struct RawEvent {
 }
 
 enum RawEventKind {
-    Midi { status: u8, data1: u8, data2: Option<u8> },
-    SysEx { data: Vec<u8> },
-    Escape { data: Vec<u8> },
-    Meta { type_byte: u8, data: Vec<u8> },
+    Midi {
+        status: u8,
+        data1: u8,
+        data2: Option<u8>,
+    },
+    SysEx {
+        data: Vec<u8>,
+    },
+    Escape {
+        data: Vec<u8>,
+    },
+    Meta {
+        type_byte: u8,
+        data: Vec<u8>,
+    },
 }
 
 impl<R: Read> TrackParser<R> {
     fn new(reader: R) -> Self {
-        Self { reader, running_status: None }
+        Self {
+            reader,
+            running_status: None,
+        }
     }
-    
+
     fn next_event(&mut self) -> Option<io::Result<RawEvent>> {
         // Read Delta
         let delta = match read_varlen(&mut self.reader) {
@@ -338,18 +388,21 @@ impl<R: Read> TrackParser<R> {
         // Read Status
         let mut status_byte = [0u8];
         if let Err(e) = self.reader.read_exact(&mut status_byte) {
-             return Some(Err(e));
+            return Some(Err(e));
         }
-        
+
         let mut status = status_byte[0];
-        
+
         // Handle Running Status
         if status < 0x80 {
             // Data Byte -> Use RS
             if let Some(rs) = self.running_status {
-                 return Some(self.parse_event_with_rs(delta, rs, Some(status)));
+                return Some(self.parse_event_with_rs(delta, rs, Some(status)));
             } else {
-                return Some(Err(io::Error::new(io::ErrorKind::InvalidData, "Data byte without Running Status")));
+                return Some(Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Data byte without Running Status",
+                )));
             }
         } else {
             // Status Byte
@@ -374,10 +427,15 @@ impl<R: Read> TrackParser<R> {
         }
     }
 
-    fn parse_event_with_rs(&mut self, delta: u32, status: u8, first_byte: Option<u8>) -> io::Result<RawEvent> {
+    fn parse_event_with_rs(
+        &mut self,
+        delta: u32,
+        status: u8,
+        first_byte: Option<u8>,
+    ) -> io::Result<RawEvent> {
         let high = status & 0xF0;
         let takes_2 = high != 0xC0 && high != 0xD0;
-        
+
         let data1 = if let Some(b) = first_byte {
             b
         } else {
@@ -385,7 +443,7 @@ impl<R: Read> TrackParser<R> {
             self.reader.read_exact(&mut b)?;
             b[0]
         };
-        
+
         let data2 = if takes_2 {
             let mut b = [0u8];
             self.reader.read_exact(&mut b)?;
@@ -393,25 +451,35 @@ impl<R: Read> TrackParser<R> {
         } else {
             None
         };
-        
+
         Ok(RawEvent {
             delta,
-            kind: RawEventKind::Midi { status, data1, data2 }
+            kind: RawEventKind::Midi {
+                status,
+                data1,
+                data2,
+            },
         })
     }
-    
+
     fn parse_sysex(&mut self, delta: u32) -> io::Result<RawEvent> {
         let len = read_varlen(&mut self.reader)?;
         let mut data = vec![0u8; len as usize];
         self.reader.read_exact(&mut data)?;
-        Ok(RawEvent { delta, kind: RawEventKind::SysEx { data } })
+        Ok(RawEvent {
+            delta,
+            kind: RawEventKind::SysEx { data },
+        })
     }
 
     fn parse_escape(&mut self, delta: u32) -> io::Result<RawEvent> {
         let len = read_varlen(&mut self.reader)?;
         let mut data = vec![0u8; len as usize];
         self.reader.read_exact(&mut data)?;
-        Ok(RawEvent { delta, kind: RawEventKind::Escape { data } })
+        Ok(RawEvent {
+            delta,
+            kind: RawEventKind::Escape { data },
+        })
     }
 
     fn parse_meta(&mut self, delta: u32) -> io::Result<RawEvent> {
@@ -420,29 +488,49 @@ impl<R: Read> TrackParser<R> {
         let len = read_varlen(&mut self.reader)?;
         let mut data = vec![0u8; len as usize];
         self.reader.read_exact(&mut data)?;
-        Ok(RawEvent { delta, kind: RawEventKind::Meta { type_byte: type_b[0], data } })
+        Ok(RawEvent {
+            delta,
+            kind: RawEventKind::Meta {
+                type_byte: type_b[0],
+                data,
+            },
+        })
     }
 
     fn parse_system_common(&mut self, delta: u32, status: u8) -> io::Result<RawEvent> {
-         let data1: u8;
-         let data2: Option<u8>;
-         
-         if status == 0xF1 || status == 0xF3 {
-             let mut b = [0u8];
-             self.reader.read_exact(&mut b)?;
-             data1 = b[0];
-             data2 = None;
-         } else if status == 0xF2 {
-             let mut b = [0u8; 2];
-             self.reader.read_exact(&mut b)?;
-             data1 = b[0];
-             data2 = Some(b[1]);
-         } else {
-             // F6, F8..FE: 0 data
-             return Ok(RawEvent { delta, kind: RawEventKind::Midi { status, data1: 0, data2: None } }); 
-         }
-         
-         Ok(RawEvent { delta, kind: RawEventKind::Midi { status, data1, data2 } })
+        let data1: u8;
+        let data2: Option<u8>;
+
+        if status == 0xF1 || status == 0xF3 {
+            let mut b = [0u8];
+            self.reader.read_exact(&mut b)?;
+            data1 = b[0];
+            data2 = None;
+        } else if status == 0xF2 {
+            let mut b = [0u8; 2];
+            self.reader.read_exact(&mut b)?;
+            data1 = b[0];
+            data2 = Some(b[1]);
+        } else {
+            // F6, F8..FE: 0 data
+            return Ok(RawEvent {
+                delta,
+                kind: RawEventKind::Midi {
+                    status,
+                    data1: 0,
+                    data2: None,
+                },
+            });
+        }
+
+        Ok(RawEvent {
+            delta,
+            kind: RawEventKind::Midi {
+                status,
+                data1,
+                data2,
+            },
+        })
     }
 }
 
@@ -465,7 +553,7 @@ fn write_varlen<W: Write>(mut value: u32, out: &mut W) -> io::Result<()> {
         return out.write_all(&[0]);
     }
     value &= 0x0FFFFFFF; // clamp
-    
+
     let mut buf = [0u8; 4];
     if value < 0x80 {
         buf[0] = value as u8;

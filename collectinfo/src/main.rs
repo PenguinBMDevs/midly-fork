@@ -1,3 +1,5 @@
+#[cfg(feature = "memory-report")]
+use midly::memory::{print_memory_usage, MemoryReporter};
 use midly::Smf;
 use std::{
     env,
@@ -6,8 +8,6 @@ use std::{
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
-#[cfg(feature = "memory-report")]
-use midly::memory::{print_memory_usage, MemoryReporter};
 
 const MIDI_DIR: &str = "../test-asset";
 

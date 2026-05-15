@@ -28,9 +28,7 @@
 //! # }
 //! ```
 
-use crate::{
-    event::{MetaMessage, MidiMessage, TrackEvent, TrackEventKind},
-};
+use crate::event::{MetaMessage, MidiMessage, TrackEvent, TrackEventKind};
 
 #[cfg(all(feature = "std", feature = "memmap"))]
 use crate::{Header, Timing};
@@ -42,20 +40,13 @@ use alloc::vec::Vec;
 use crate::fast_midi::{self, MidiEvent, TrackIter as FastTrackIter};
 
 #[cfg(all(feature = "std", feature = "memmap"))]
-use std::{
-    cmp::Reverse,
-    collections::BinaryHeap,
-};
+use std::{cmp::Reverse, collections::BinaryHeap};
 
 #[cfg(all(feature = "std", feature = "memmap"))]
 use memmap2::Mmap;
 
 #[cfg(all(feature = "std", feature = "memmap"))]
-use std::{
-    collections::VecDeque,
-    fs::File,
-    path::Path,
-};
+use std::{collections::VecDeque, fs::File, path::Path};
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -335,8 +326,7 @@ impl NoteIndex {
 
 /// Temporary storage for notes being built during parsing.
 #[cfg(feature = "alloc")]
-#[derive(Clone, Copy)]
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 struct ActiveNote {
     start_tick: u32,
     velocity: u8,
@@ -619,7 +609,10 @@ fn parse_track_notes(track: &[TrackEvent], track_idx: u16) -> (Vec<PackedNote>, 
         acc.advance(event.delta.as_int());
 
         match &event.kind {
-            TrackEventKind::Midi { channel: _, message } => match message {
+            TrackEventKind::Midi {
+                channel: _,
+                message,
+            } => match message {
                 MidiMessage::NoteOn { key, vel } => {
                     acc.note_on(*key, vel.as_int());
                 }
@@ -656,11 +649,7 @@ fn parse_track_notes_and_control_events(
                 }
                 MidiMessage::NoteOff { key, vel: _ } => note_acc.note_off(*key),
                 MidiMessage::Controller { controller, value } => {
-                    ctrl_acc.control_change(
-                        channel.as_int(),
-                        controller.as_int(),
-                        value.as_int(),
-                    );
+                    ctrl_acc.control_change(channel.as_int(), controller.as_int(), value.as_int());
                 }
                 MidiMessage::ProgramChange { program } => {
                     ctrl_acc.program_change(channel.as_int(), program.as_int());
@@ -696,7 +685,9 @@ pub fn extract_notes_and_control_events(
             smf.tracks
                 .par_iter()
                 .enumerate()
-                .map(|(track_idx, track)| parse_track_notes_and_control_events(track, track_idx as u16))
+                .map(|(track_idx, track)| {
+                    parse_track_notes_and_control_events(track, track_idx as u16)
+                })
                 .collect()
         }
         #[cfg(not(feature = "parallel"))]
@@ -704,7 +695,9 @@ pub fn extract_notes_and_control_events(
             smf.tracks
                 .iter()
                 .enumerate()
-                .map(|(track_idx, track)| parse_track_notes_and_control_events(track, track_idx as u16))
+                .map(|(track_idx, track)| {
+                    parse_track_notes_and_control_events(track, track_idx as u16)
+                })
                 .collect()
         }
     };
@@ -759,9 +752,11 @@ pub fn extract_notes_and_control_events(
 /// ```
 #[cfg(feature = "alloc")]
 pub fn extract_notes_from_bytes(bytes: &[u8]) -> crate::Result<(Vec<PackedNote>, Vec<(u32, f32)>)> {
-    let (_header, tracks_count, _division, raw) = fast_midi::parse_header(bytes)?;
+    // Convert MIDI 2.0 UMP chunks to MTrk before parsing
+    let data = crate::ump::preprocess_smf(bytes);
+    let (_header, tracks_count, _division, raw) = fast_midi::parse_header(&data)?;
     let tracks = fast_midi::iter_tracks_from_data(raw, tracks_count);
-    
+
     // Use parallel extraction if available
     let track_results: Vec<(Vec<PackedNote>, Vec<(u32, f32)>)> = {
         #[cfg(feature = "parallel")]
@@ -822,7 +817,9 @@ pub fn extract_notes_from_bytes(bytes: &[u8]) -> crate::Result<(Vec<PackedNote>,
 pub fn extract_notes_and_control_events_from_bytes(
     bytes: &[u8],
 ) -> crate::Result<(Vec<PackedNote>, Vec<(u32, f32)>, Vec<PackedControlEvent>)> {
-    let (_header, tracks_count, _division, raw) = fast_midi::parse_header(bytes)?;
+    // Convert MIDI 2.0 UMP chunks to MTrk before parsing
+    let data = crate::ump::preprocess_smf(bytes);
+    let (_header, tracks_count, _division, raw) = fast_midi::parse_header(&data)?;
     let tracks = fast_midi::iter_tracks_from_data(raw, tracks_count);
 
     // Use parallel extraction if available
@@ -879,7 +876,10 @@ pub fn extract_notes_and_control_events_from_bytes(
 
 /// Parse events directly to notes without allocating intermediate TrackEvent structs.
 #[cfg(feature = "alloc")]
-fn parse_fast_track_notes(mut events: FastTrackIter, track_idx: u16) -> (Vec<PackedNote>, Vec<(u32, f32)>) {
+fn parse_fast_track_notes(
+    mut events: FastTrackIter,
+    track_idx: u16,
+) -> (Vec<PackedNote>, Vec<(u32, f32)>) {
     let mut acc = NoteAccumulator::new(track_idx);
 
     while let Some((delta, event)) = events.next_event() {
@@ -888,11 +888,13 @@ fn parse_fast_track_notes(mut events: FastTrackIter, track_idx: u16) -> (Vec<Pac
         match event {
             MidiEvent::NoteOn { key, velocity, .. } => acc.note_on(key, velocity),
             MidiEvent::NoteOff { key, .. } => acc.note_off(key),
-            MidiEvent::Meta { event_type: 0x51, data } => {
+            MidiEvent::Meta {
+                event_type: 0x51,
+                data,
+            } => {
                 if data.len() == 3 {
-                    let microseconds = ((data[0] as u32) << 16)
-                        | ((data[1] as u32) << 8)
-                        | (data[2] as u32);
+                    let microseconds =
+                        ((data[0] as u32) << 16) | ((data[1] as u32) << 8) | (data[2] as u32);
                     acc.tempo_microseconds(microseconds);
                 }
             }
@@ -908,11 +910,7 @@ fn parse_fast_track_notes(mut events: FastTrackIter, track_idx: u16) -> (Vec<Pac
 fn parse_fast_track_notes_and_control_events(
     mut events: FastTrackIter,
     track_idx: u16,
-) -> (
-    Vec<PackedNote>,
-    Vec<(u32, f32)>,
-    Vec<PackedControlEvent>,
-) {
+) -> (Vec<PackedNote>, Vec<(u32, f32)>, Vec<PackedControlEvent>) {
     let mut note_acc = NoteAccumulator::new(track_idx);
     let mut ctrl_acc = ControlEventAccumulator::new(track_idx);
 
@@ -931,14 +929,14 @@ fn parse_fast_track_notes_and_control_events(
             MidiEvent::ProgramChange { channel, program } => {
                 ctrl_acc.program_change(channel, program)
             }
-            MidiEvent::PitchBend { channel, bend } => {
-                ctrl_acc.pitch_bend(channel, bend)
-            }
-            MidiEvent::Meta { event_type: 0x51, data } => {
+            MidiEvent::PitchBend { channel, bend } => ctrl_acc.pitch_bend(channel, bend),
+            MidiEvent::Meta {
+                event_type: 0x51,
+                data,
+            } => {
                 if data.len() == 3 {
-                    let microseconds = ((data[0] as u32) << 16)
-                        | ((data[1] as u32) << 8)
-                        | (data[2] as u32);
+                    let microseconds =
+                        ((data[0] as u32) << 16) | ((data[1] as u32) << 8) | (data[2] as u32);
                     note_acc.tempo_microseconds(microseconds);
                 }
             }
@@ -967,7 +965,10 @@ struct TrackHeapItem {
 impl Ord for TrackHeapItem {
     fn cmp(&self, other: &Self) -> core::cmp::Ordering {
         // Reverse for min-heap
-        other.tick.cmp(&self.tick).then_with(|| other.cursor_idx.cmp(&self.cursor_idx))
+        other
+            .tick
+            .cmp(&self.tick)
+            .then_with(|| other.cursor_idx.cmp(&self.cursor_idx))
     }
 }
 
@@ -1029,8 +1030,8 @@ pub struct StreamingNoteLoader {
     _mmap: Mmap,
     header: Header,
     division: u16,
-    
-    // Event streaming  
+
+    // Event streaming
     cursors: Vec<TrackCursor<'static>>,
     heap: BinaryHeap<Reverse<TrackHeapItem>>,
     parsed_until: u32,
@@ -1072,9 +1073,11 @@ impl StreamingNoteLoader {
         })?;
 
         // SAFETY: Read-only mapping is safe
-        let mmap = unsafe { Mmap::map(&file).map_err(|_| {
-            crate::Error::new(&crate::ErrorKind::Invalid("failed to memory map file"))
-        })? };
+        let mmap = unsafe {
+            Mmap::map(&file).map_err(|_| {
+                crate::Error::new(&crate::ErrorKind::Invalid("failed to memory map file"))
+            })?
+        };
 
         Self::from_mmap(mmap)
     }
@@ -1100,7 +1103,11 @@ impl StreamingNoteLoader {
         let cursors: Vec<TrackCursor<'static>> = unsafe {
             tracks
                 .into_iter()
-                .map(|events| std::mem::transmute::<TrackCursor<'_>, TrackCursor<'static>>(TrackCursor::new(events)))
+                .map(|events| {
+                    std::mem::transmute::<TrackCursor<'_>, TrackCursor<'static>>(TrackCursor::new(
+                        events,
+                    ))
+                })
                 .collect()
         };
 
@@ -1174,7 +1181,11 @@ impl StreamingNoteLoader {
     }
 
     /// Prepare notes for the current frame/view window.
-    pub fn prepare_frame(&mut self, current_tick: f32, ticks_per_screen: f32) -> (&[PackedNote], &[Option<u16>; 256]) {
+    pub fn prepare_frame(
+        &mut self,
+        current_tick: f32,
+        ticks_per_screen: f32,
+    ) -> (&[PackedNote], &[Option<u16>; 256]) {
         let screen_end = current_tick + ticks_per_screen;
         let parse_target = (screen_end + ticks_per_screen).max(0.0) as u32;
 
@@ -1393,56 +1404,61 @@ const PARALLEL_BATCH_BYTES: usize = 20 * 1024 * 1024;
 pub fn scan_midi_file(path: &std::path::Path) -> crate::Result<MidiScanResult> {
     use std::io::{BufReader, Read, Seek, SeekFrom};
 
-    let file = std::fs::File::open(path).map_err(|_| {
-        crate::Error::new(&crate::ErrorKind::Invalid("failed to open midi file"))
-    })?;
+    let file = std::fs::File::open(path)
+        .map_err(|_| crate::Error::new(&crate::ErrorKind::Invalid("failed to open midi file")))?;
     let file_len = file.metadata().map(|m| m.len()).unwrap_or(4096);
     let mut reader = BufReader::with_capacity(4 * 1024 * 1024, file);
 
     let mut magic = [0u8; 4];
-    reader.read_exact(&mut magic).map_err(|_| {
-        crate::Error::new(&crate::ErrorKind::Invalid("file too short"))
-    })?;
+    reader
+        .read_exact(&mut magic)
+        .map_err(|_| crate::Error::new(&crate::ErrorKind::Invalid("file too short")))?;
 
     if &magic == b"RIFF" {
-        reader.seek(SeekFrom::Start(0)).map_err(|_| {
-            crate::Error::new(&crate::ErrorKind::Invalid("seek failed"))
-        })?;
+        reader
+            .seek(SeekFrom::Start(0))
+            .map_err(|_| crate::Error::new(&crate::ErrorKind::Invalid("seek failed")))?;
         let scan_size = file_len.min(4096) as usize;
         let mut scan_buf = vec![0u8; scan_size];
         reader.read_exact(&mut scan_buf).map_err(|_| {
             crate::Error::new(&crate::ErrorKind::Invalid("failed to scan RIFF header"))
         })?;
 
-        let mthd_pos = scan_buf.windows(4)
+        let mthd_pos = scan_buf
+            .windows(4)
             .position(|w| w == b"MThd")
             .ok_or_else(|| crate::Error::new(&crate::ErrorKind::Invalid("no MThd in RIFF")))?;
 
-        reader.seek(SeekFrom::Start(mthd_pos as u64)).map_err(|_| {
-            crate::Error::new(&crate::ErrorKind::Invalid("seek to MThd failed"))
-        })?;
+        reader
+            .seek(SeekFrom::Start(mthd_pos as u64))
+            .map_err(|_| crate::Error::new(&crate::ErrorKind::Invalid("seek to MThd failed")))?;
     } else if &magic == b"MThd" {
-        reader.seek(SeekFrom::Start(0)).map_err(|_| {
-            crate::Error::new(&crate::ErrorKind::Invalid("seek failed"))
-        })?;
+        reader
+            .seek(SeekFrom::Start(0))
+            .map_err(|_| crate::Error::new(&crate::ErrorKind::Invalid("seek failed")))?;
     } else {
-        return Err(crate::Error::new(&crate::ErrorKind::Invalid("not a MIDI file")));
+        return Err(crate::Error::new(&crate::ErrorKind::Invalid(
+            "not a MIDI file",
+        )));
     }
 
     let mut header_buf = [0u8; 14];
-    reader.read_exact(&mut header_buf).map_err(|_| {
-        crate::Error::new(&crate::ErrorKind::Invalid("truncated MIDI header"))
-    })?;
+    reader
+        .read_exact(&mut header_buf)
+        .map_err(|_| crate::Error::new(&crate::ErrorKind::Invalid("truncated MIDI header")))?;
 
     if &header_buf[0..4] != b"MThd" {
-        return Err(crate::Error::new(&crate::ErrorKind::Invalid("invalid MIDI header")));
+        return Err(crate::Error::new(&crate::ErrorKind::Invalid(
+            "invalid MIDI header",
+        )));
     }
 
-    let header_len = u32::from_be_bytes([
-        header_buf[4], header_buf[5], header_buf[6], header_buf[7],
-    ]);
+    let header_len =
+        u32::from_be_bytes([header_buf[4], header_buf[5], header_buf[6], header_buf[7]]);
     if header_len < 6 {
-        return Err(crate::Error::new(&crate::ErrorKind::Invalid("MIDI header too short")));
+        return Err(crate::Error::new(&crate::ErrorKind::Invalid(
+            "MIDI header too short",
+        )));
     }
 
     if header_len > 6 {
@@ -1479,11 +1495,27 @@ pub fn scan_midi_file(path: &std::path::Path) -> crate::Result<MidiScanResult> {
                 break;
             }
             let chunk_len = u32::from_be_bytes([
-                chunk_header[4], chunk_header[5],
-                chunk_header[6], chunk_header[7],
+                chunk_header[4],
+                chunk_header[5],
+                chunk_header[6],
+                chunk_header[7],
             ]);
             if &chunk_header[0..4] != b"MTrk" {
-                let _ = reader.seek(SeekFrom::Current(chunk_len as i64));
+                if &chunk_header[0..4] == b"UMP " {
+                    let ump_len = chunk_len as usize;
+                    let mut ump_buf = vec![0u8; ump_len];
+                    if reader.read_exact(&mut ump_buf).is_err() {
+                        break;
+                    }
+                    let mtrk_data = crate::ump::convert_ump_chunk_to_mtrk(&ump_buf);
+                    result.track_count += 1;
+                    let (notes, max_tick, tempos) = fast_midi::scan_track_notes_only(&mtrk_data);
+                    result.note_count += notes;
+                    result.max_tick = result.max_tick.max(max_tick);
+                    result.tempo_changes.extend(tempos);
+                } else {
+                    let _ = reader.seek(SeekFrom::Current(chunk_len as i64));
+                }
                 continue;
             }
             let track_len = chunk_len as usize;
@@ -1491,7 +1523,9 @@ pub fn scan_midi_file(path: &std::path::Path) -> crate::Result<MidiScanResult> {
                 if !batch.is_empty() {
                     let results: Vec<(u64, u32, Vec<(u32, f32)>)> = batch
                         .par_iter()
-                        .map(|&(start, len)| fast_midi::scan_track_notes_only(&buf[start..start + len]))
+                        .map(|&(start, len)| {
+                            fast_midi::scan_track_notes_only(&buf[start..start + len])
+                        })
                         .collect();
                     for (notes, max_tick, tempos) in results {
                         result.note_count += notes;
@@ -1525,7 +1559,10 @@ pub fn scan_midi_file(path: &std::path::Path) -> crate::Result<MidiScanResult> {
                 batch.clear();
                 buf_used = 0;
             }
-            if reader.read_exact(&mut buf[buf_used..buf_used + track_len]).is_err() {
+            if reader
+                .read_exact(&mut buf[buf_used..buf_used + track_len])
+                .is_err()
+            {
                 break;
             }
             batch.push((buf_used, track_len));
@@ -1558,11 +1595,28 @@ pub fn scan_midi_file(path: &std::path::Path) -> crate::Result<MidiScanResult> {
                 break;
             }
             let chunk_len = u32::from_be_bytes([
-                chunk_header[4], chunk_header[5],
-                chunk_header[6], chunk_header[7],
+                chunk_header[4],
+                chunk_header[5],
+                chunk_header[6],
+                chunk_header[7],
             ]);
             if &chunk_header[0..4] != b"MTrk" {
-                let _ = reader.seek(SeekFrom::Current(chunk_len as i64));
+                if &chunk_header[0..4] == b"UMP " {
+                    let ump_len = chunk_len as usize;
+                    track_buf.clear();
+                    track_buf.resize(ump_len, 0);
+                    if reader.read_exact(&mut track_buf).is_err() {
+                        break;
+                    }
+                    let mtrk_data = crate::ump::convert_ump_chunk_to_mtrk(&track_buf);
+                    result.track_count += 1;
+                    let (notes, max_tick, tempos) = fast_midi::scan_track_notes_only(&mtrk_data);
+                    result.note_count += notes;
+                    result.max_tick = result.max_tick.max(max_tick);
+                    result.tempo_changes.extend(tempos);
+                } else {
+                    let _ = reader.seek(SeekFrom::Current(chunk_len as i64));
+                }
                 continue;
             }
             let track_len = chunk_len as usize;
@@ -1571,7 +1625,8 @@ pub fn scan_midi_file(path: &std::path::Path) -> crate::Result<MidiScanResult> {
             if reader.read_exact(&mut track_buf).is_err() {
                 break;
             }
-            let (track_notes, track_max_tick, track_tempos) = fast_midi::scan_track_notes_only(&track_buf);
+            let (track_notes, track_max_tick, track_tempos) =
+                fast_midi::scan_track_notes_only(&track_buf);
             result.note_count += track_notes;
             result.max_tick = result.max_tick.max(track_max_tick);
             result.tempo_changes.extend(track_tempos);
@@ -1597,8 +1652,8 @@ pub fn scan_midi_file(path: &std::path::Path) -> crate::Result<MidiScanResult> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::num::{u4, u7, u15, u28};
     use crate::{Format, Timing};
-    use crate::num::{u7, u4, u15, u28};
 
     #[test]
     fn test_packed_note_size() {
@@ -1631,13 +1686,13 @@ mod tests {
     #[test]
     fn test_packed_note_overlaps() {
         let note = PackedNote::new(100, 200, 60, 100, 0);
-        
+
         // Overlapping ranges
         assert!(note.overlaps(50.0, 150.0));
         assert!(note.overlaps(150.0, 250.0));
         assert!(note.overlaps(120.0, 180.0));
         assert!(note.overlaps(100.0, 200.0));
-        
+
         // Non-overlapping ranges
         assert!(!note.overlaps(0.0, 50.0));
         assert!(!note.overlaps(250.0, 300.0));
@@ -1652,7 +1707,7 @@ mod tests {
         ];
 
         let index = NoteIndex::build(notes, 100);
-        
+
         assert_eq!(index.len(), 3);
         assert_eq!(index.max_end_tick(), 300);
         assert!(!index.is_empty());
@@ -1668,7 +1723,7 @@ mod tests {
         ];
 
         let index = NoteIndex::build(notes, 100);
-        
+
         // Query range 25-175 should find first 2 notes
         let results: Vec<_> = index.query_range(25.0, 175.0).collect();
         assert_eq!(results.len(), 2);
@@ -1677,7 +1732,7 @@ mod tests {
         let key1 = results[1].key;
         assert_eq!(key0, 60);
         assert_eq!(key1, 64);
-        
+
         // Query range 150-250 should find note 2 (spans 50-150) and note 3 (200-300)
         let results: Vec<_> = index.query_range(150.0, 250.0).collect();
         assert_eq!(results.len(), 2);
@@ -1700,36 +1755,34 @@ mod tests {
                 format: Format::Parallel,
                 timing: Timing::Metrical(u15::new(480)),
             },
-            tracks: vec![
-                vec![
-                    // Note on at tick 0
-                    TrackEvent {
-                        delta: u28::new(0),
-                        kind: TrackEventKind::Midi {
-                            channel: u4::new(0),
-                            message: MidiMessage::NoteOn {
-                                key: 60u8,
-                                vel: u7::new(100),
-                            },
+            tracks: vec![vec![
+                // Note on at tick 0
+                TrackEvent {
+                    delta: u28::new(0),
+                    kind: TrackEventKind::Midi {
+                        channel: u4::new(0),
+                        message: MidiMessage::NoteOn {
+                            key: 60u8,
+                            vel: u7::new(100),
                         },
                     },
-                    // Note off at tick 480
-                    TrackEvent {
-                        delta: u28::new(480),
-                        kind: TrackEventKind::Midi {
-                            channel: u4::new(0),
-                            message: MidiMessage::NoteOff {
-                                key: 60u8,
-                                vel: u7::new(0),
-                            },
+                },
+                // Note off at tick 480
+                TrackEvent {
+                    delta: u28::new(480),
+                    kind: TrackEventKind::Midi {
+                        channel: u4::new(0),
+                        message: MidiMessage::NoteOff {
+                            key: 60u8,
+                            vel: u7::new(0),
                         },
                     },
-                ],
-            ],
+                },
+            ]],
         };
 
         let (notes, tempo_changes) = extract_notes(&smf);
-        
+
         assert_eq!(notes.len(), 1);
         // Copy fields to avoid unaligned reference
         let start_tick = notes[0].start_tick;
@@ -1742,7 +1795,7 @@ mod tests {
         assert_eq!(key, 60);
         assert_eq!(velocity, 100);
         assert_eq!(track, 0);
-        
+
         // Should have default tempo
         assert_eq!(tempo_changes.len(), 1);
         assert_eq!(tempo_changes[0], (0, 120.0));

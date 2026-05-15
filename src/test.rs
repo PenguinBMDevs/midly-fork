@@ -170,9 +170,9 @@ fn test_live_api(file: &str) {
     let arena = crate::Arena::new();
     for (bytes, ev) in smf.tracks.iter().flat_map(|track| track.iter()) {
         use crate::{
+            TrackEventKind,
             live::{LiveEvent, SystemCommon},
             num::u7,
-            TrackEventKind,
         };
         match ev.kind {
             TrackEventKind::Midi { channel, message } => {
@@ -226,7 +226,7 @@ fn test_live_api(file: &str) {
 #[test]
 fn live_trailing_bytes() {
     // Make sure that the live API allows trailing bytes
-    use crate::{live::LiveEvent, MidiMessage};
+    use crate::{MidiMessage, live::LiveEvent};
 
     assert_eq!(
         LiveEvent::parse(&[0x93, 0x7F, 0x7F, 0x34]).unwrap(),
@@ -311,10 +311,10 @@ fn live_system() {
 
 fn test_stream_api(file: &str) {
     use crate::{
+        TrackEventKind,
         live::{LiveEvent, SystemCommon, SystemRealtime},
         num::u7,
         stream::MidiStream,
-        TrackEventKind,
     };
 
     #[derive(Debug)]

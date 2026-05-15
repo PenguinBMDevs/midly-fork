@@ -14,9 +14,9 @@
 //! Note that MIDI byte streams, which are not clearly delimited packets, must be parsed through
 //! the [`stream`](../stream/index.html) api.
 
-use crate::{event::MidiMessage, prelude::*};
 #[cfg(feature = "alloc")]
-use crate::{event::TrackEventKind, Arena};
+use crate::{Arena, event::TrackEventKind};
+use crate::{event::MidiMessage, prelude::*};
 
 /// A live event produced by an OS API or generated on-the-fly, in contrast with "dead"
 /// [`TrackEvent`](../struct.TrackEvent.html)s stored in a `.mid` file.
@@ -239,10 +239,9 @@ impl<'a> SystemCommon<'a> {
             0xF1 if data.len() >= 1 => {
                 //MTC Quarter Frame
                 match MtcQuarterFrameMessage::from_code(data[0].as_int() >> 4) {
-                    Some(msg) => SystemCommon::MidiTimeCodeQuarterFrame(
-                        msg,
-                        u4::from(data[0].as_int()),
-                    ),
+                    Some(msg) => {
+                        SystemCommon::MidiTimeCodeQuarterFrame(msg, u4::from(data[0].as_int()))
+                    }
                     None => bail!(err_invalid!("invalid MTC quarter frame code")),
                 }
             }

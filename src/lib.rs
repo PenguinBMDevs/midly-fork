@@ -194,7 +194,7 @@ mod prelude {
     pub(crate) use crate::{
         error::{ErrorKind, Result, ResultExt, StdResult},
         io::{Seek, Write, WriteCounter, WriteResult},
-        primitive::{u14, u24, u28, u4, u7, IntRead, IntReadBottom7, SplitChecked},
+        primitive::{IntRead, IntReadBottom7, SplitChecked, u4, u7, u14, u24, u28},
     };
     #[cfg(feature = "alloc")]
     pub(crate) use alloc::{boxed::Box, vec, vec::Vec};
@@ -212,16 +212,18 @@ mod prelude {
 
 mod arena;
 mod event;
+#[cfg(feature = "alloc")]
+mod fast_midi;
 pub mod io;
 pub mod live;
 pub mod loader;
-#[cfg(feature = "alloc")]
-mod fast_midi;
 pub mod memory;
 mod primitive;
 mod riff;
 mod smf;
 pub mod stream;
+#[cfg(feature = "alloc")]
+pub mod ump;
 
 /// High-performance memory-mapped MIDI parsing module.
 ///
@@ -240,7 +242,7 @@ pub use crate::{
     error::{Error, ErrorKind, Result},
     event::{MetaMessage, MidiMessage, PitchBend, TrackEvent, TrackEventKind},
     primitive::{Format, Fps, SmpteTime, Timing},
-    smf::{parse, write, EventBytemapIter, EventIter, Header, TrackIter},
+    smf::{EventBytemapIter, EventIter, Header, TrackIter, parse, write},
 };
 
 /// High-performance mmap-based parsing exports.
@@ -249,8 +251,8 @@ pub use crate::mmap::{FileStats, MmapEventIter, MmapSmf, MmapTrack};
 /// High-performance note extraction and streaming loader exports.
 #[cfg(feature = "alloc")]
 pub use crate::loader::{
-    extract_notes, extract_notes_and_control_events, extract_notes_and_control_events_from_bytes,
-    extract_notes_from_bytes, extract_notes_indexed, NoteIndex, PackedControlEvent, PackedNote,
+    NoteIndex, PackedControlEvent, PackedNote, extract_notes, extract_notes_and_control_events,
+    extract_notes_and_control_events_from_bytes, extract_notes_from_bytes, extract_notes_indexed,
 };
 
 #[cfg(all(feature = "std", feature = "memmap"))]
@@ -258,11 +260,11 @@ pub use crate::loader::StreamingNoteLoader;
 
 /// Sequential file scanner for bounded-memory MIDI processing.
 #[cfg(feature = "std")]
-pub use crate::loader::{scan_midi_file, MidiScanResult};
+pub use crate::loader::{MidiScanResult, scan_midi_file};
 
 /// Exotically-sized integers used by the MIDI standard.
 pub mod num {
-    pub use crate::primitive::{u14, u15, u24, u28, u4, u7};
+    pub use crate::primitive::{u4, u7, u14, u15, u24, u28};
 }
 
 #[cfg(test)]

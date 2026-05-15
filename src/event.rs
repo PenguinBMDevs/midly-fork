@@ -3,7 +3,7 @@
 use crate::{
     live::{LiveEvent, SystemCommon},
     prelude::*,
-    primitive::{read_varlen_slice, write_varlen_slice, SmpteTime},
+    primitive::{SmpteTime, read_varlen_slice, write_varlen_slice},
 };
 
 /// Represents a parsed SMF track event.
@@ -380,8 +380,12 @@ impl MidiMessage {
                 controller: u7::from(data[0]),
                 value: u7::from(data[1]),
             },
-            0xC => MidiMessage::ProgramChange { program: u7::from(data[0]) },
-            0xD => MidiMessage::ChannelAftertouch { vel: u7::from(data[0]) },
+            0xC => MidiMessage::ProgramChange {
+                program: u7::from(data[0]),
+            },
+            0xD => MidiMessage::ChannelAftertouch {
+                vel: u7::from(data[0]),
+            },
             0xE => {
                 //Note the little-endian order, contrasting with the default big-endian order of
                 //Standard Midi Files
