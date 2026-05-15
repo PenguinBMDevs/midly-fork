@@ -1174,7 +1174,7 @@ impl StreamingNoteLoader {
     }
 
     /// Prepare notes for the current frame/view window.
-    pub fn prepare_frame(&mut self, current_tick: f32, ticks_per_screen: f32) -> (&[PackedNote], &[Option<u16>; 128]) {
+    pub fn prepare_frame(&mut self, current_tick: f32, ticks_per_screen: f32) -> (&[PackedNote], &[Option<u16>; 256]) {
         let screen_end = current_tick + ticks_per_screen;
         let parse_target = (screen_end + ticks_per_screen).max(0.0) as u32;
 
