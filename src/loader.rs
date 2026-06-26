@@ -874,6 +874,70 @@ pub fn extract_notes_and_control_events_from_bytes(
     Ok((all_notes, all_tempo_changes, all_control_events))
 }
 
+/// 按轨提取结果，用于避免全局 `Vec<PackedNote>` 大数组的随机访问开销。
+///
+/// 与全局合并函数不同，该结构保留每轨数据的独立性，使得下游消费者
+/// 可以为每轨分配独立的连续 Arena，而不是在数 GB 的全局 notes 上构建索引。
+#[cfg(feature = "alloc")]
+#[derive(Clone, Debug)]
+pub struct TrackExtractResult {
+    /// 该轨解析出的音符，按开始 tick 有序。
+    pub notes: Vec<PackedNote>,
+    /// 该轨解析出的速度变化事件。
+    pub tempo_changes: Vec<(u32, f32)>,
+    /// 该轨解析出的控制 / 音色 / 弯音事件。
+    pub control_events: Vec<PackedControlEvent>,
+}
+
+/// 直接从 MIDI 字节流按轨提取音符与控制事件。
+///
+/// 这是 [`extract_notes_and_control_events_from_bytes`] 的按轨版本。
+/// 它避免了将所有音轨合并到单个全局 `Vec<PackedNote>` 所带来的内存与缓存开销；
+/// 调用方可以独立处理每个音轨，只在最后合并较小的速度/控制事件列表。
+#[cfg(feature = "alloc")]
+pub fn extract_notes_and_control_events_per_track_from_bytes(
+    bytes: &[u8],
+) -> crate::Result<Vec<TrackExtractResult>> {
+    let data = crate::ump::preprocess_smf(bytes);
+    let (_header, tracks_count, _division, raw) = fast_midi::parse_header(&data)?;
+    let tracks = fast_midi::iter_tracks_from_data(raw, tracks_count);
+
+    let track_results: Vec<(Vec<PackedNote>, Vec<(u32, f32)>, Vec<PackedControlEvent>)> = {
+        #[cfg(feature = "parallel")]
+        {
+            use rayon::prelude::*;
+            tracks
+                .into_par_iter()
+                .enumerate()
+                .map(|(track_idx, events)| {
+                    parse_fast_track_notes_and_control_events(events, track_idx as u16)
+                })
+                .collect()
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            tracks
+                .into_iter()
+                .enumerate()
+                .map(|(track_idx, events)| {
+                    parse_fast_track_notes_and_control_events(events, track_idx as u16)
+                })
+                .collect()
+        }
+    };
+
+    let results: Vec<TrackExtractResult> = track_results
+        .into_iter()
+        .map(|(notes, tempo_changes, control_events)| TrackExtractResult {
+            notes,
+            tempo_changes,
+            control_events,
+        })
+        .collect();
+
+    Ok(results)
+}
+
 /// Parse events directly to notes without allocating intermediate TrackEvent structs.
 #[cfg(feature = "alloc")]
 fn parse_fast_track_notes(
