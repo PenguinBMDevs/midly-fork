@@ -944,24 +944,41 @@ pub fn extract_notes_and_control_events_per_track_from_bytes(
 /// 把所有音轨的 `Vec<PackedNote>` 同时保留在内存中；每解析完一轨就立即调用
 /// `track_handler`，下游可立即转换并释放该轨数据，从而降低大文件加载的峰值内存。
 ///
-/// 注意：该版本按顺序逐轨解析，不启用并行，以换取更可控的内存峰值。
-/// 如果调用方更关注速度且内存充足，请使用 [`extract_notes_and_control_events_per_track_from_bytes`]。
+/// 该版本使用 `rayon` 并行解析各轨，并通过 `Mutex` 保护回调，因此回调可能被
+/// 以任意顺序、多线程并发调用。调用方应通过 `track_idx` 自行写入对应槽位，
+/// 不依赖回调顺序。
 #[cfg(feature = "alloc")]
 pub fn extract_notes_and_control_events_per_track_streaming_from_bytes<F>(
     bytes: &[u8],
-    mut track_handler: F,
+    track_handler: F,
 ) -> crate::Result<()>
 where
-    F: FnMut(usize, Vec<PackedNote>, Vec<(u32, f32)>, Vec<PackedControlEvent>),
+    F: FnMut(usize, Vec<PackedNote>, Vec<(u32, f32)>, Vec<PackedControlEvent>) + Send,
 {
     let data = crate::ump::preprocess_smf(bytes);
     let (_header, tracks_count, _division, raw) = fast_midi::parse_header(&data)?;
     let tracks = fast_midi::iter_tracks_from_data(raw, tracks_count);
 
-    for (track_idx, events) in tracks.into_iter().enumerate() {
-        let (notes, tempo_changes, control_events) =
-            parse_fast_track_notes_and_control_events(events, track_idx as u16);
-        track_handler(track_idx, notes, tempo_changes, control_events);
+    let handler = std::sync::Mutex::new(track_handler);
+
+    #[cfg(feature = "parallel")]
+    {
+        use rayon::prelude::*;
+        tracks.into_par_iter().enumerate().for_each(|(track_idx, events)| {
+            let (notes, tempo_changes, control_events) =
+                parse_fast_track_notes_and_control_events(events, track_idx as u16);
+            let mut h = handler.lock().unwrap_or_else(|e| e.into_inner());
+            h(track_idx, notes, tempo_changes, control_events);
+        });
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        let mut handler = track_handler;
+        for (track_idx, events) in tracks.into_iter().enumerate() {
+            let (notes, tempo_changes, control_events) =
+                parse_fast_track_notes_and_control_events(events, track_idx as u16);
+            handler(track_idx, notes, tempo_changes, control_events);
+        }
     }
 
     Ok(())
