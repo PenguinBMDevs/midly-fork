@@ -938,6 +938,35 @@ pub fn extract_notes_and_control_events_per_track_from_bytes(
     Ok(results)
 }
 
+/// 直接从 MIDI 字节流按轨提取音符与控制事件，通过回调逐轨处理。
+///
+/// 与 [`extract_notes_and_control_events_per_track_from_bytes`] 不同，该函数不会
+/// 把所有音轨的 `Vec<PackedNote>` 同时保留在内存中；每解析完一轨就立即调用
+/// `track_handler`，下游可立即转换并释放该轨数据，从而降低大文件加载的峰值内存。
+///
+/// 注意：该版本按顺序逐轨解析，不启用并行，以换取更可控的内存峰值。
+/// 如果调用方更关注速度且内存充足，请使用 [`extract_notes_and_control_events_per_track_from_bytes`]。
+#[cfg(feature = "alloc")]
+pub fn extract_notes_and_control_events_per_track_streaming_from_bytes<F>(
+    bytes: &[u8],
+    mut track_handler: F,
+) -> crate::Result<()>
+where
+    F: FnMut(usize, Vec<PackedNote>, Vec<(u32, f32)>, Vec<PackedControlEvent>),
+{
+    let data = crate::ump::preprocess_smf(bytes);
+    let (_header, tracks_count, _division, raw) = fast_midi::parse_header(&data)?;
+    let tracks = fast_midi::iter_tracks_from_data(raw, tracks_count);
+
+    for (track_idx, events) in tracks.into_iter().enumerate() {
+        let (notes, tempo_changes, control_events) =
+            parse_fast_track_notes_and_control_events(events, track_idx as u16);
+        track_handler(track_idx, notes, tempo_changes, control_events);
+    }
+
+    Ok(())
+}
+
 /// Parse events directly to notes without allocating intermediate TrackEvent structs.
 #[cfg(feature = "alloc")]
 fn parse_fast_track_notes(
