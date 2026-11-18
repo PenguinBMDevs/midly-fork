@@ -58,6 +58,7 @@
 **EOT TrackTiming** ✅（指导书 §2）
 - `TrackTiming { eot_tick, physical_end_tick, content_end_tick, has_events_after_eot, has_unclosed_notes }` + `declared_end_tick()` + `is_strict_clean()`；`TrackAllEvents.timing` 暴露。
 - **悬挂音符**：`has_unclosed_notes` 只作诊断（解析器仍按物理末尾收尾，语义未变）；下游可据此提示/裁剪（lumino PR #308）。
+- **时间线长度（lumino 侧）**：`total_ticks` 取 `max(declared_end_tick())`（最晚 EOT）——畸形尾部不拉长时长，事件仍保留（只有显式 `trim_after_eot` 才删除）。Pi 68016→71426、164M 3,093,120→3,093,150。
 - 默认**兼容模式**：EOT 后事件照常解析（NoteOff 完成配对、文本/SysEx 全保留），只打标记；Strict 由调用方按 `is_strict_clean()` 决策；缺 EOT → `None` + fallback 物理末尾。
 - **热循环零开销**：EOT 处理全在 Meta 分支内，用 `TrackIter::remaining_len()` 判定 EOT 后是否还有字节，`content_end_tick` 循环后推导。同机 A/B：min 7.92 vs 7.96ms（无回归）。
 - 测试：`tests/eot.rs` §2.9 十项（315 行）+ Oracle 参考链独立算 timing，11 fixture 逐轨一致。

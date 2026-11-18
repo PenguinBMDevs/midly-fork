@@ -1,0 +1,1 @@
+﻿combined=5da44320a3002383	header=e043dbaec3789ed8	notes=a4e9294192f8495b	controls=9b3f360936b905f9	tempo=38e2a3ed0b80bdb8	time_sigs=4d0e18b076bfb208	key_sigs=e49d8fdf9923394a	lyrics=a8c7f832281a39c5	markers=80e3e79f593758ca	text_meta=9e39663e6335d7b2	sysex=d57f420fcd5058e6	track_meta=8e5d15dcc0555013	notes_n=164206462	controls_n=218987	tracks=826	total_ticks=3093150
