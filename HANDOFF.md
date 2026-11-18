@@ -83,7 +83,7 @@
   下游接入随 Tier2 一起待办（见 `perf/tier2/README.md`）。
 - 原始数据：`perf/results/p4-164m.tsv`。
 
-**commit 表（baseline/0.6.5，master 未动，均未签名未推送）**
+**commit 表（baseline/0.6.5，master 未动；已签名并推送至 github/baseline/0.6.5）**
 
 | SHA | 内容 |
 |-----|------|
@@ -108,15 +108,14 @@
 
 ## 3. 当前仓库状态（重要）
 
-- **fork**：`baseline/0.6.5` = 19f00fd（补签后），工作树干净。**17 个提交已全部 GPG 签名
-  （`git log --format=%G?` 全为 G）**。
-  - **推送受阻**：`origin` 是 gh-proxy（只读，报 `No anonymous write access`）；直连
-    `https://github.com` 低速超时；`git@github.com:22` 被 reset；`ssh.github.com:443` 可达但
-    本机无 GitHub 公钥（`Permission denied (publickey)`）。
-  - **已备好 bundle**：`F:\midly-fork\baseline-0.6.5-signed-2026-11-18.bundle`（`*.bundle` 已 gitignore）。
-    在能访问 GitHub 的机器上：
-    `git fetch <bundle> baseline/0.6.5:baseline/0.6.5 && git push origin baseline/0.6.5`
-    （或用 SSH 443 + 配好公钥：`ssh://git@ssh.github.com:443/PenguinBMDevs/midly-fork.git`）。
+- **fork**：`baseline/0.6.5` = 9ade3f7，工作树干净。**19 个提交全部 GPG 签名（G）并已推送**。
+  - 远端布局：`origin` = `ssh://git@ssh.github.com:443/...`（本机无 SSH 公钥，不能用）；
+    **`github` = `https://github.com/PenguinBMDevs/midly-fork.git`（推送用这个）**。
+  - 推送通道：本机 Clash 代理 `127.0.0.1:7890`，仓库级只配 github.com：
+    `git config --local "http.https://github.com.proxy" "http://127.0.0.1:7890"`
+    （gh-proxy 只读、直连 HTTPS 被限速、SSH 22 被 reset；GCM 已存 `git:https://github.com` 凭据）。
+  - 推送命令：`git push github baseline/0.6.5`；备份 bundle：
+    `baseline-0.6.5-signed-2026-11-18.bundle`（gitignore）。
   - **旧 SHA 已作废**：补签是对 `master..baseline/0.6.5` 逐提交 `--amend -S` 重写，§2 表里的
     SHA 不再是当前值，以 `git log --oneline` 为准。
 - **lumino-rs（dev）：工作区已被用户重置并提交自身工作，与 fork 无关联**。
@@ -218,7 +217,8 @@ cd F:\lumino-rs; cargo test -p lumino-midi-model -p lumino-midi-loader
 
 ## 8. 下一步（优先级序）
 
-0. **GPG 补签 + 推 fork**（用户正在补）：15 个提交未签名未推送；补好后统一签名/推送。
+0. **推送已完成** ✅：19 提交已签名并推到 `github/baseline/0.6.5`（详见 §3）。后续提交：
+   `git push github baseline/0.6.5`（仓库级代理配置已就绪）。
 1. **P4 解析热循环**（fork 侧主板手，现在就能做；P3 后 minimal t8 ≈ 8.5–10ms 即天花板）：
    - 文本收集成本：0.6.3 纯解析快 20-25%（靠丢文本换的，禁止）；目标不丢数据收回成本。
    - 每事件双 `advance(delta)` 合并；4 个近重复 `parse_fast_track_*` 合并；NoteAccumulator 容量策略。
@@ -251,6 +251,9 @@ cd F:\lumino-rs; cargo test -p lumino-midi-model -p lumino-midi-loader
   否则 `cargo build`/`cargo test` 在清单解析阶段即失败（与 `lumino` feature 无关）。
 - `lumino-bench digest` 的规范摘要按 (tick, track, …) 排序：不要用未排序摘要做门禁（跨轨同 tick
   顺序随调度变化，会假报不一致）。
+- **GPG 签名 ≠ 推送认证**：GPG 只签提交内容；推送需要 HTTPS PAT（GCM 已存 `git:https://github.com`）
+  或 SSH 公钥。本机 `origin` 是 `ssh://git@ssh.github.com:443` 但无公钥；**推送走 `github` 远端**
+  （HTTPS + 仓库级代理 `http.https://github.com.proxy`）。gh-proxy 只读，不能推。
 - **测量前必须确认机器空闲**：本会话在 CPU 负载 100%（Zed/播放器/Edge）时测得 Pi minimal
   22–25ms（正常 8.5–10ms），墙钟直接翻倍；用 `Get-CimInstance Win32_Processor` 看 LoadPercentage。
 - **lumino-rs 工作区可能被用户重置/提交**：任何未提交改动都会消失。Tier2 类改动只在临时窗口做，
