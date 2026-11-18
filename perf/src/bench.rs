@@ -9,9 +9,10 @@
 
 use std::time::Instant;
 
+#[cfg(feature = "collect-api")]
+use midly::loader::extract_all_events_per_track_collect_from_bytes;
 use midly::loader::{
     PackedControlEvent, PackedNote, TrackAllEvents,
-    extract_all_events_per_track_collect_from_bytes,
     extract_all_events_per_track_streaming_from_bytes,
 };
 
@@ -92,6 +93,7 @@ pub struct BenchReport {
 }
 
 /// P3 无锁并行路径的逐轨产物：逐轨工作在回调内完成，归并只做 extend。
+#[cfg(feature = "collect-api")]
 struct ParTrackOutput {
     notes: Vec<PackedNote>,
     control_events: Vec<PackedControlEvent>,
@@ -167,6 +169,7 @@ impl Sink {
     }
 
     /// 无锁并行路径的归并：只做按轨序的 extend / 拼接，逐轨重活已在回调内并行完成。
+    #[cfg(feature = "collect-api")]
     fn merge_par(&mut self, idx: usize, slot: ParTrackOutput) {
         let n = slot.notes.len();
         self.events += slot.events as u64;
@@ -185,6 +188,7 @@ impl Sink {
 }
 
 /// P3 无锁并行路径的单轮回调：逐轨排序 / 产物保留 / 文本复制全部在工作线程内完成。
+#[cfg(feature = "collect-api")]
 fn parallel_track_output(mut ev: TrackAllEvents) -> ParTrackOutput {
     let t0 = Instant::now();
     let mut events = ev.notes.len()
@@ -292,6 +296,7 @@ pub fn run_bench(bytes: &[u8], file_size: u64, cfg: &BenchConfig) -> Result<Benc
                 let result = invoke();
                 result.map_err(|e| format!("解析失败: {e:?}"))?;
             }
+            #[cfg(feature = "collect-api")]
             CallbackKind::ParallelApi => {
                 // 无锁并行：逐轨工作在回调内并行完成，只有下面的按轨序归并是串行的。
                 let collect = || {
@@ -312,6 +317,12 @@ pub fn run_bench(bytes: &[u8], file_size: u64, cfg: &BenchConfig) -> Result<Benc
                     sink.merge_par(idx, slot);
                 }
                 merge_ms = merge0.elapsed().as_secs_f64() * 1000.0;
+            }
+            #[cfg(not(feature = "collect-api"))]
+            CallbackKind::ParallelApi => {
+                return Err(
+                    "该构建未启用 collect-api（midly fork 0.6.5+ 才有 `_collect_` API）".into(),
+                );
             }
         }
         let wall_ms = t0.elapsed().as_secs_f64() * 1000.0;

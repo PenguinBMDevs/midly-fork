@@ -283,6 +283,13 @@ $exe = "F:\midly-fork\perf\target\release\midly-perf.exe"
 #   源 F:\Soundfont Collection v1\…StarT 164 Million v1.1fix.mid 的 track 769
 #   1 轨 / 8,795,520 音符 / 67MB / division 1920
 
+# P2 矩阵：版本 × parallel/serial × 线程 × 素材（一键复现，脚本自动构建 + 记录环境）
+& F:\midly-fork\perf\matrix.ps1 -Versions fork,0.6.5,0.6.4,0.6.3 -Modes parallel,serial `
+    -Threads 1,8,16 -Materials pi,clementi,control,sysex,text -Runs 15 -Warmup 3
+#   - 二进制缓存：perf/target/matrix/<label>.exe；-NoBuild 复用
+#   - 基线 0.6.3/0.6.4 自动关闭 collect-api（0.6.3 还关闭 text-events）
+#   - 输出：perf/results/matrix-<ts>.tsv + .meta.txt（含 CPU/负载/commit/rustc）
+
 # Tier2 真实链路测量台（要求同机存在 ../lumino-rs；编译 midi-model 及其依赖）
 cargo build --release --features lumino --bin lumino-bench     # 默认 patch=fork
 & F:\midly-fork\perf\target\release\lumino-bench.exe digest F:\midly-fork\test-asset\Pi.mid
@@ -337,8 +344,9 @@ cd F:\lumino-rs; cargo test -p lumino-midi-model -p lumino-midi-loader
    **A5 已落地为 PR #303**（`feat/midi-track-radix-sort`，base 已改为 `dev`）：
    稳定基数排序 → 164M 端到端 728.8→543.4ms（-25.5%），峰值 +7.8%；
    等 CI 全绿后合并。
-4. **P2 矩阵补全（剩余项）**：矩阵驱动脚本（版本 × parallel/serial × 线程 × 素材）；
-   mmap 冷/热页缓存分离；电源模式固定并记录。
+4. **P2 矩阵补全** ✅ **脚本已落地**（`perf/matrix.ps1`）：版本 × parallel/serial × 线程 × 素材，
+   自动构建/缓存、自动关 `collect-api`（0.6.3/0.6.4 基线）、输出 TSV + 环境 meta。
+   剩余：mmap 冷/热页缓存分离口径；电源模式固定并记录（需在空闲窗口跑正式矩阵）。
 5. EOT 后续（可选）：Strict 解析模式 API；下游用 `timing` 做悬挂音符/Hold 收尾与 Trim 策略。
 
 ## 9. 技术陷阱清单

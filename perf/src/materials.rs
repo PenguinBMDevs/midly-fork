@@ -21,9 +21,15 @@ pub fn generate_all(out_dir: &Path) -> std::io::Result<Vec<(String, usize)>> {
     fs::create_dir_all(out_dir)?;
     let items: Vec<(&str, Vec<u8>)> = vec![
         ("gen-single-small.mid", single_track_small()),
-        ("gen-single-giant.mid", single_giant_track(1_000_000)),
-        ("gen-control-dense.mid", control_dense(8, 16_000)),
-        ("gen-sysex-dense.mid", sysex_dense(4, 200, 8 * 1024)),
+        ("gen-single-giant.mid", single_giant_track(GIANT_NOTES)),
+        (
+            "gen-control-dense.mid",
+            control_dense(CONTROL_TRACKS, CONTROL_NOTES_PER_TRACK),
+        ),
+        (
+            "gen-sysex-dense.mid",
+            sysex_dense(SYSEX_TRACKS, SYSEX_PER_TRACK, SYSEX_PAYLOAD),
+        ),
         (
             "gen-text-dense.mid",
             text_dense(TEXT_TRACKS, TEXT_GROUPS_PER_TRACK),
@@ -269,7 +275,7 @@ fn ev_escape(t: &mut Vec<u8>, delta: u32, data: &[u8]) {
     t.extend_from_slice(data);
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "collect-api", feature = "text-events"))]
 mod tests {
     use super::*;
     use midly::Smf;

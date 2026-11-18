@@ -18,12 +18,14 @@ rayon = { version = "1", optional = true }
 lumino-midi-model = { path = "../../lumino-rs/crates/audio/midi-model", optional = true }
 
 [features]
-default = ["parallel", "text-events"]
+default = ["parallel", "text-events", "collect-api"]
 # 关闭 parallel = midly serial 路径（--no-default-features --features text-events）
 parallel = ["midly/parallel", "dep:rayon"]
 # 0.6.3 的 TrackAllEvents 无 text_events 字段（0.6.4 才加入）；
 # 对 0.6.3 基线跑分时关闭：--no-default-features --features parallel
 text-events = []
+# midly fork 0.6.5+ 的 P3 无锁 _collect_ API；对比 0.6.3/0.6.4 基线时必须关闭。
+collect-api = []
 # Tier2 真实链路 bench（lumino-bench）
 lumino = ["dep:lumino-midi-model"]
 
