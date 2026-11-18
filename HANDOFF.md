@@ -146,6 +146,26 @@
 | 真实链路 Clementi | 0.041 → 0.042ms | 持平 |
 | **164M（1.25GB/826轨）真实链路 前→后** | **4358 → 2261ms（-48%）** | peak 3404→3461MB（+1.7%）；跳过 `scan_track_names` 再降至 978ms |
 
+**P4 上限测量（A1，2026-11-18；原始数据 `perf/results/p4-a1-upper-bounds.tsv`）**
+
+删除式 A/B（同机同批交替、min 口径、25 次/进程 × 4 进程）：
+
+| 假设 | 素材 | 基线 → 删除后 | 结论 |
+|---|---|---|---|
+| 文本收集成本 | gen-text-dense（文本类占 60%） | 5.30 → **1.82ms（-66%）** | 约 2.4ns/文本事件 |
+| 文本收集成本 | Pi.mid（真实素材） | 8.03 → 7.88ms（-1.9%） | **噪声内，不立项** |
+| 双 `advance(delta)` 合并 | Pi / 单巨轨 | 7.89→7.40 / 10.05→9.78ms | **噪声内（median 持平），不立项** |
+| **音符容量预估** | Pi.mid | 8.24 → **5.28ms（-36%）** | **立项** |
+| **音符容量预估** | gen-single-giant | 10.09 → **8.41ms（-16.6%）** | **立项** |
+| **音符容量预估** | 164M | 396.03 → **303.04ms（-23.5%）** | **立项**（安静窗口） |
+
+落地结果（A2，`e2904fe`）：Pi 9.26→6.49ms（-30%）、单巨轨 -14%、text_dense -7.9%、
+164M 同批 512.73→350.10ms（-31.7%，机器 22–45% 负载，绝对值偏高）。
+**峰值不升反降**（`retain-all` 口径）：Pi 116.2→114.9MB、164M 5844.3→5689.1MB（-2.7%）。
+4 个近重复 `parse_fast_track_*` 合并**不属于性能项**（各自单态化、同时只跑一个），
+如需合并只为减少维护面，不带来墙钟收益。
+
+
 - 计量限制：`GetProcessTimes` 按 15.625ms tick 量化（CPU 仅粗口径）；机器波动 ±2ms（同配置复测）；结论一律用 min/median 区间 + 同批交替 A/B。
 - 冷/热页缓存：当前 harness 用 `fs::read` 整份入内存，解析测量与页缓存无关（冷热只影响未计时的读盘）；mmap 冷缺页属 Tier2 口径，未测 —— 已记录为限制，不要假装测过。
 
@@ -164,8 +184,8 @@
 
 ```powershell
 cd F:\midly-fork
-cargo test --features memmap,strict                                        # 77+10+6+13
-cargo test --no-default-features --features std,alloc,memmap,strict        # 77+10+6+12
+cargo test --features memmap,strict                                        # 78+10+6+13
+cargo test --no-default-features --features std,alloc,memmap,strict        # 78+10+6+12
 cargo test --test eot --features memmap,strict -- --nocapture
 cargo clippy --all-targets --features memmap,strict
 rustfmt --edition 2024 --check src/loader.rs src/fast_midi.rs tests/eot.rs tests/oracle.rs tests/oracle/*.rs
@@ -173,11 +193,13 @@ rustfmt --edition 2024 --check src/loader.rs src/fast_midi.rs tests/eot.rs tests
 # perf 测量台
 cd F:\midly-fork\perf
 cargo build --release
-cargo test                                                                 # 生成器自校验 2 项
+cargo test                                                                 # 生成器自校验 3 项
 $exe = "F:\midly-fork\perf\target\release\midly-perf.exe"
 & $exe gen "F:\midly-fork\test-asset\generated"
 & $exe characterize "F:\midly-fork\test-asset\Pi.mid"
 & $exe bench "F:\midly-fork\test-asset\Pi.mid" --threads 8 --callback realistic-par --label fork-0.6.5 --out F:\midly-fork\perf\results\x.tsv
+# callback: minimal（纯解析）| retain-all（保留全量产物，峰值口径）| realistic | realistic-par
+# 素材：gen-text-dense.mid 是「文本风暴」上限素材（文本类占 60%），不要当真实分布引用
 # serial 构建：cargo build --release --no-default-features --features text-events
 # 版本对照：cargo build --release --config "patch.crates-io.lumino-midly.path='F:/midly-baselines/lumino-midly-0.6.4'"
 #   ⚠ 跑完对照务必恢复 fork 构建（二进制会被基线覆盖）
@@ -219,10 +241,13 @@ cd F:\lumino-rs; cargo test -p lumino-midi-model -p lumino-midi-loader
 
 0. **推送已完成** ✅：19 提交已签名并推到 `github/baseline/0.6.5`（详见 §3）。后续提交：
    `git push github baseline/0.6.5`（仓库级代理配置已就绪）。
-1. **P4 解析热循环**（fork 侧主板手，现在就能做；P3 后 minimal t8 ≈ 8.5–10ms 即天花板）：
-   - 文本收集成本：0.6.3 纯解析快 20-25%（靠丢文本换的，禁止）；目标不丢数据收回成本。
-   - 每事件双 `advance(delta)` 合并；4 个近重复 `parse_fast_track_*` 合并；NoteAccumulator 容量策略。
-   - **先做"删除式 A/B"测上限**，再单假设实现；机器必须空闲（见 §9）。
+1. **P4 解析热循环** ✅ **已完成唯一有效项**（其余为噪声内，见 §4）：
+   - `e2904fe`：音符容量按 `track_bytes / 6` 预估（不变式：每 NoteOn/NoteOff
+     ≥3 字节），单轨上限 16M 音符。Pi -30%、164M -23.5%、峰值 -2.7%。
+   - 文本收集（2.4ns/事件）只在文本风暴素材上可测；`advance` 合并无效；
+     `parse_fast_track_*` 合并是维护项不是性能项。**没有别的 P4 假设待做**——
+     新的热循环假设必须先有删除式上限数据再立项。
+   - 新增测量能力：`--callback retain-all`（峰值口径）、`gen-text-dense.mid`。
 2. **P5 单巨轨轨内并行**：gen-single-giant 13.36ms 且 P3 无收益。
    **素材已就位**：从 164M 真实文件抽轨 769 → 单轨 format 0（8,795,520 音符，67MB，
    逐字节保真；`midly-perf to-format0` 可对任意源再生成）。注意：826 轨里最大轨占 5.4%，
