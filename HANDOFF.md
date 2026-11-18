@@ -190,6 +190,35 @@
 
 
 - 计量限制：`GetProcessTimes` 按 15.625ms tick 量化（CPU 仅粗口径）；机器波动 ±2ms（同配置复测）；结论一律用 min/median 区间 + 同批交替 A/B。
+
+**A4：Tier2 之后剩余成本分解（164M，`lumino-bench phases`，2026-11-18 晚）**
+
+| 阶段（164M，接入后 765ms） | 墙钟 | 占比 |
+|---|---|---|
+| 0.15→0.50 并行逐轨（解析 + 排序 + ChunkedList） | **765.1ms** | **99.9%** |
+| 0.50→0.70 按轨序归并 | 1.0ms | 0.1% |
+| 0.70→0.72 控制/文本排序 | 1.1ms | 0.1% |
+| 其余（头部 / TrackManager / 构造） | ~0.1ms | — |
+
+逐轨内部（各线程累计 CPU，826 轨；`LUMINO_PHASE_STATS=1` 探针）：
+
+- 排序 `sort_by_key(start_tick)` **1915.8ms（62%）**
+- `ChunkedList::from_sorted_iter` **1002.2ms（32%）**
+- 其余（分配 / 文本复制）177ms
+- 解析本身 ≈ **2256ms**（由 midly minimal 282ms × 8 估算）
+- 总 CPU ≈ 5351ms → 理想墙钟 669ms；实测 765ms（并行效率 87%）
+
+**尾部（单轨 handler 耗时，前 5）**：766 **450.0ms**、769 363.7ms、767 329.9ms、
+775 212.0ms、774 159.4ms。前 5 轨占全部逐轨工作 **48.9%**，**最大单轨 = 端到端墙钟的 59%**。
+
+结论（决定下一杠杆）：
+
+- 「轨内并行解析」（P5）不是最大杠杆——即使解析并行，巨轨的**排序 + ChunkedList**
+  仍是单线程临界路径；P5 的天花板被这两项吃掉。
+- 排序是**内存受限**的：3 条 800 万音符级轨（各 ~123MB 音符数组）单独构成 450ms 临界路径；
+  按全文件平均 18.9ns/音符估算会低估 2.4×（大轨 44.7ns/音符）。
+- 控制事件 k-way merge 已无价值：控制/文本排序合计 **1.1ms**。
+
 - 冷/热页缓存：当前 harness 用 `fs::read` 整份入内存，解析测量与页缓存无关（冷热只影响未计时的读盘）；mmap 冷缺页属 Tier2 口径，未测 —— 已记录为限制，不要假装测过。
 
 ## 5. 红线与纪律
@@ -236,6 +265,7 @@ $exe = "F:\midly-fork\perf\target\release\midly-perf.exe"
 # Tier2 真实链路测量台（要求同机存在 ../lumino-rs；编译 midi-model 及其依赖）
 cargo build --release --features lumino --bin lumino-bench     # 默认 patch=fork
 & F:\midly-fork\perf\target\release\lumino-bench.exe digest F:\midly-fork\test-asset\Pi.mid
+& F:\midly-fork\perf\target\release\lumino-bench.exe phases <file.mid>     # 进度回调 → 分阶段墙钟
 & F:\midly-fork\perf\target\release\lumino-bench.exe run F:\midly-fork\test-asset\Pi.mid --warmup 2 --runs 5 --label tier2 --out F:\midly-fork\perf\results\tier2.tsv
 # 对照基线（0.6.5）：
 cargo build --release --features lumino --bin lumino-bench --config "patch.crates-io.lumino-midly.path='F:/midly-baselines/lumino-midly-0.6.5'"
@@ -279,9 +309,10 @@ cd F:\lumino-rs; cargo test -p lumino-midi-model -p lumino-midi-loader
    （164M 与 StarT210k），**没有任何真实 format 0 素材** → 无法给出「单轨占主导」的分布证据。
    A3 上限：单轨 101 Mevents/s vs 多轨 445 Mevents/s（4.3×），但 8.8M 单轨绝对时间仅 85ms。
    **结论：P5 暂不立项**，除非后续出现真实的 format 0/单巨轨素材或用户侧统计。
-3. **Tier2 落地（已解除阻塞，等用户 go）**：midly 侧改动已全部完成（P4 收口、P5 数据否决）。
-   `perf/tier2/README.md` 的接入步骤已实测跑通（181 绿 + digest 一致 + Pi -51% / 164M -74%），
-   并已合入 `track_name`（免二次全扫描）。落地只差 lumino-rs 侧一次提交/依赖改造决策。
+3. **Tier2 落地 ✅ 已开 PR**：`lumino-rs` 分支 `feat/midi-tier2`（`f8b47981`，已推送）→ PR #302（base `dev`）。
+   本地验证：181 绿 + digest 一致 + Pi -51% / 164M -74%；依赖为 fork `rev = e8edb9a`。
+   **后续优化（A4 数据重排）**：巨轨排序 + ChunkedList（450ms 临界路径）> P5 轨内解析；
+   控制事件 k-way merge 已无价值（1.1ms）。
 4. **P2 矩阵补全（剩余项）**：矩阵驱动脚本（版本 × parallel/serial × 线程 × 素材）；
    mmap 冷/热页缓存分离；电源模式固定并记录。
 5. EOT 后续（可选）：Strict 解析模式 API；下游用 `timing` 做悬挂音符/Hold 收尾与 Trim 策略。

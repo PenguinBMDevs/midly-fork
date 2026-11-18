@@ -1,0 +1,18 @@
+phase	metric	material	value	unit	note
+A4	phase 0.15->0.50（解析+排序+ChunkedList，并行段）	StarT164M	765.1	ms wall	占端到端 99.9%
+A4	phase 0.50->0.70（按轨序归并）	StarT164M	1.0	ms wall	-
+A4	phase 0.70->0.72（控制/文本排序）	StarT164M	1.1	ms wall	-
+A4	handler CPU sort（各线程累计）	StarT164M	1915.8	ms cpu	62% of 逐轨工作
+A4	handler CPU chunked（各线程累计）	StarT164M	1002.2	ms cpu	32%
+A4	handler CPU total（826 轨）	StarT164M	3095.1	ms cpu	-
+A4	parse CPU（由 minimal 282ms×8 估算）	StarT164M	2256	ms cpu	42% of 总 CPU
+A4	ideal wall（总 CPU/8）	StarT164M	669	ms wall	-
+A4	efficiency	StarT164M	87	%	765 实际 vs 669 理想
+A4	top1 track 766	StarT164M	450.0	ms	8,763,000 音符
+A4	top2 track 769	StarT164M	363.7	ms	8,795,520 音符
+A4	top3 track 767	StarT164M	329.9	ms	8,031,480 音符
+A4	top4 track 775	StarT164M	212.0	ms	4,319,356 音符
+A4	top5 track 774	StarT164M	159.4	ms	4,193,000 音符
+A4	top5 share	StarT164M	48.9	%	前 5 轨占逐轨工作
+A4	max track / wall	StarT164M	59	%	450 / 765
+A4	phase 0.15->0.50	Pi.mid	9.3	ms wall	其余阶段 ~0.1ms

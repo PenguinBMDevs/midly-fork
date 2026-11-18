@@ -16,6 +16,7 @@
 //! 用法：
 //! ```text
 //! lumino-bench digest <file.mid> [out.txt]
+//! lumino-bench phases <file.mid>          # 进度回调 → 分阶段墙钟
 //! lumino-bench run <file.mid> [--warmup 2] [--runs 5] [--out results.tsv] [--label L]
 //! ```
 //!
@@ -367,6 +368,38 @@ fn main() -> ExitCode {
             }
             Err(e) => {
                 eprintln!("{path}: {e}");
+                ExitCode::FAILURE
+            }
+        };
+    }
+
+    if mode == "phases" {
+        // 分阶段时间线：把主链路的进度回调（0.05/0.10/0.15/…/0.90）映射成墙钟。
+        // 不改变任何被测代码；进度点由 document_build 内部决定。
+        let t0 = Instant::now();
+        let marks: std::sync::Mutex<Vec<(f64, f64)>> = std::sync::Mutex::new(Vec::new());
+        let result = MidiDocument::from_notes_bytes(
+            &bytes,
+            Some(&|p| {
+                if let Ok(mut m) = marks.lock() {
+                    m.push((p, t0.elapsed().as_secs_f64() * 1000.0));
+                }
+            }),
+        );
+        return match result {
+            Ok((_doc, _division, notes)) => {
+                let list = marks.lock().map(|m| m.clone()).unwrap_or_default();
+                let mut prev = 0.0f64;
+                for (p, t) in list {
+                    println!("phase\t{p:.2}\t{t:.1}ms\t+{:.1}ms", t - prev);
+                    prev = t;
+                }
+                println!("phase\tend\t{:.1}ms", t0.elapsed().as_secs_f64() * 1000.0);
+                println!("notes\t{notes}");
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("{path}: 加载失败: {e}");
                 ExitCode::FAILURE
             }
         };
