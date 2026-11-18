@@ -120,6 +120,9 @@
     SHA 不再是当前值，以 `git log --oneline` 为准。
 - **lumino-rs（dev）：工作区已被用户重置并提交自身工作，与 fork 无关联**。
   - 用户决策：**Tier2 合并等 midly 全部改动完成后再做**（依赖改造视为待办）。
+  - **2026-11-18 晚：Tier2 + track_name 已本地临时接入验证并完整还原**
+    （181 绿：56+1+124，5 ignored；Pi/164M digest 逐字段一致；
+    Pi 16.74→8.25ms -51%、164M 2818→783ms -74%）。工作树仍干净（`cargo check` 通过）。
   - 参考实现与接入步骤、A/B 数据：`perf/tier2/`（`README.md` + `document_build.rs.tier2`）。
   - **不要在 lumino-rs 留任何未提交改动**（用户会重置）；需要实测时按 `perf/tier2/README.md` 临时接入，
     测完 `git checkout --` 还原。
@@ -276,8 +279,9 @@ cd F:\lumino-rs; cargo test -p lumino-midi-model -p lumino-midi-loader
    （164M 与 StarT210k），**没有任何真实 format 0 素材** → 无法给出「单轨占主导」的分布证据。
    A3 上限：单轨 101 Mevents/s vs 多轨 445 Mevents/s（4.3×），但 8.8M 单轨绝对时间仅 85ms。
    **结论：P5 暂不立项**，除非后续出现真实的 format 0/单巨轨素材或用户侧统计。
-3. **Tier2 落地（待 midly 全部改动完成后）**：按 `perf/tier2/README.md` 接入，并**顺手接
-   `track_name`**（164M 实测可再降 -57%）；之后做控制事件 k-way merge 收回 StarT 的 +7%。
+3. **Tier2 落地（已解除阻塞，等用户 go）**：midly 侧改动已全部完成（P4 收口、P5 数据否决）。
+   `perf/tier2/README.md` 的接入步骤已实测跑通（181 绿 + digest 一致 + Pi -51% / 164M -74%），
+   并已合入 `track_name`（免二次全扫描）。落地只差 lumino-rs 侧一次提交/依赖改造决策。
 4. **P2 矩阵补全（剩余项）**：矩阵驱动脚本（版本 × parallel/serial × 线程 × 素材）；
    mmap 冷/热页缓存分离；电源模式固定并记录。
 5. EOT 后续（可选）：Strict 解析模式 API；下游用 `timing` 做悬挂音符/Hold 收尾与 Trim 策略。
