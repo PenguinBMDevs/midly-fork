@@ -56,7 +56,8 @@
 - 峰值内存 Pi +1.7%（同量级）；StarT/Clementi 持平或更低。
 
 **EOT TrackTiming** ✅（指导书 §2）
-- `TrackTiming { eot_tick, physical_end_tick, content_end_tick, has_events_after_eot }` + `declared_end_tick()` + `is_strict_clean()`；`TrackAllEvents.timing` 暴露。
+- `TrackTiming { eot_tick, physical_end_tick, content_end_tick, has_events_after_eot, has_unclosed_notes }` + `declared_end_tick()` + `is_strict_clean()`；`TrackAllEvents.timing` 暴露。
+- **悬挂音符**：`has_unclosed_notes` 只作诊断（解析器仍按物理末尾收尾，语义未变）；下游可据此提示/裁剪（lumino PR #308）。
 - 默认**兼容模式**：EOT 后事件照常解析（NoteOff 完成配对、文本/SysEx 全保留），只打标记；Strict 由调用方按 `is_strict_clean()` 决策；缺 EOT → `None` + fallback 物理末尾。
 - **热循环零开销**：EOT 处理全在 Meta 分支内，用 `TrackIter::remaining_len()` 判定 EOT 后是否还有字节，`content_end_tick` 循环后推导。同机 A/B：min 7.92 vs 7.96ms（无回归）。
 - 测试：`tests/eot.rs` §2.9 十项（315 行）+ Oracle 参考链独立算 timing，11 fixture 逐轨一致。
@@ -347,7 +348,12 @@ cd F:\lumino-rs; cargo test -p lumino-midi-model -p lumino-midi-loader
 4. **P2 矩阵补全** ✅ **脚本已落地**（`perf/matrix.ps1`）：版本 × parallel/serial × 线程 × 素材，
    自动构建/缓存、自动关 `collect-api`（0.6.3/0.6.4 基线）、输出 TSV + 环境 meta。
    剩余：mmap 冷/热页缓存分离口径；电源模式固定并记录（需在空闲窗口跑正式矩阵）。
-5. EOT 后续（可选）：Strict 解析模式 API；下游用 `timing` 做悬挂音符/Hold 收尾与 Trim 策略。
+5. **EOT 下游**（进行中，PR #308）：
+   - fork `da2a68f`：`TrackTiming.has_unclosed_notes`（悬挂音符诊断，解析语义不变）；
+   - lumino `feat/midi-eot-downstream`：`eot` 模块（`LoadTimingReport` / `TrimReport` /
+     `trim_after_eot`）、`from_notes_bytes_with_timing`、加载期 `tracing::warn`；
+   - 待办：UI 展示诊断（目前只有日志）、挂起音符的产品侧收尾策略（本 PR 只报告不裁剪）。
+   - 另：Strict 解析模式 API 仍未做（`is_strict_clean()` 已可供调用方使用）。
 
 ## 9. 技术陷阱清单
 
