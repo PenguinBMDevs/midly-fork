@@ -183,6 +183,12 @@ $exe = "F:\midly-fork\perf\target\release\midly-perf.exe"
 # 版本对照：cargo build --release --config "patch.crates-io.lumino-midly.path='F:/midly-baselines/lumino-midly-0.6.4'"
 #   ⚠ 跑完对照务必恢复 fork 构建（二进制会被基线覆盖）
 
+# 抽单轨为 format 0（逐字节保真；P5 素材）
+& F:\midly-fork\perf\target\release\midly-perf.exe to-format0 <src.mid> <dst.mid> [--track N]   # 默认选最大轨
+# 已生成（gitignore，可重跑）：test-asset/generated/star164-largest-track-format0.mid
+#   源 F:\Soundfont Collection v1\…StarT 164 Million v1.1fix.mid 的 track 769
+#   1 轨 / 8,795,520 音符 / 67MB / division 1920
+
 # Tier2 真实链路测量台（要求同机存在 ../lumino-rs；编译 midi-model 及其依赖）
 cargo build --release --features lumino --bin lumino-bench     # 默认 patch=fork
 & F:\midly-fork\perf\target\release\lumino-bench.exe digest F:\midly-fork\test-asset\Pi.mid
@@ -217,8 +223,10 @@ cd F:\lumino-rs; cargo test -p lumino-midi-model -p lumino-midi-loader
    - 文本收集成本：0.6.3 纯解析快 20-25%（靠丢文本换的，禁止）；目标不丢数据收回成本。
    - 每事件双 `advance(delta)` 合并；4 个近重复 `parse_fast_track_*` 合并；NoteAccumulator 容量策略。
    - **先做"删除式 A/B"测上限**，再单假设实现；机器必须空闲（见 §9）。
-2. **P5 单巨轨轨内并行**：gen-single-giant 13.36ms 且 P3 无收益；164M 素材是 826 轨均衡，
-   仍需 format 0 真实样本统计后再决定投入。
+2. **P5 单巨轨轨内并行**：gen-single-giant 13.36ms 且 P3 无收益。
+   **素材已就位**：从 164M 真实文件抽轨 769 → 单轨 format 0（8,795,520 音符，67MB，
+   逐字节保真；`midly-perf to-format0` 可对任意源再生成）。注意：826 轨里最大轨占 5.4%，
+   对**该文件** P5 不是关键路径；P5 的价值仍取决于「单轨占主导」的素材分布（format 0 真实样本）。
 3. **Tier2 落地（待 midly 全部改动完成后）**：按 `perf/tier2/README.md` 接入，并**顺手接
    `track_name`**（164M 实测可再降 -57%）；之后做控制事件 k-way merge 收回 StarT 的 +7%。
 4. **P2 矩阵补全（剩余项）**：矩阵驱动脚本（版本 × parallel/serial × 线程 × 素材）；

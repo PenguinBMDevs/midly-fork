@@ -3,6 +3,7 @@
 //! 用法：
 //!   midly-perf gen <out_dir>
 //!   midly-perf characterize <file.mid>
+//!   midly-perf to-format0 <src.mid> <dst.mid> [--track N]
 //!   midly-perf bench <file.mid> [--threads N] [--warmup W] [--runs R]
 //!                  [--callback minimal|realistic|realistic-par] [--label L] [--out results.tsv]
 //!
@@ -44,12 +45,123 @@ fn main() -> ExitCode {
 
     match mode {
         "characterize" => characterize(path, &bytes, file_mb),
+        "to-format0" => to_format0(&bytes, &args[2..]),
         "bench" => run_bench_cli(path, &bytes, file_mb, &args[2..]),
         _ => {
             eprintln!("未知模式: {mode}");
             ExitCode::FAILURE
         }
     }
+}
+
+/// 拆分 SMF 的 MTrk 原始字节（不解析事件，零分配拷贝）。
+///
+/// 返回 `(division, 各轨原始字节)`；只支持裸 SMF（RIFF/.rmi 先解包后使用）。
+fn split_smf_tracks(data: &[u8]) -> Result<(u16, Vec<&[u8]>), String> {
+    if data.len() < 14 || &data[0..4] != b"MThd" {
+        return Err("不是裸 SMF（MThd 缺失；RIFF/.rmi 请先解包）".into());
+    }
+    let header_len = u32::from_be_bytes(data[4..8].try_into().unwrap_or([0; 4])) as usize;
+    let division = u16::from_be_bytes(data[12..14].try_into().unwrap_or([0; 2]));
+    let mut offset = 8 + header_len;
+    let mut tracks = Vec::new();
+    while offset + 8 <= data.len() {
+        let id = &data[offset..offset + 4];
+        let len =
+            u32::from_be_bytes(data[offset + 4..offset + 8].try_into().unwrap_or([0; 4])) as usize;
+        let start = offset + 8;
+        let end = start.saturating_add(len).min(data.len());
+        if id == b"MTrk" {
+            tracks.push(&data[start..end]);
+        }
+        if end <= offset {
+            break;
+        }
+        offset = end;
+    }
+    Ok((division, tracks))
+}
+
+/// 组装单轨 format 0 SMF（MThd + 一条原样 MTrk）。
+fn build_format0(division: u16, track: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(track.len() + 22);
+    out.extend_from_slice(b"MThd");
+    out.extend_from_slice(&6u32.to_be_bytes());
+    out.extend_from_slice(&0u16.to_be_bytes()); // format 0
+    out.extend_from_slice(&1u16.to_be_bytes()); // 1 track
+    out.extend_from_slice(&division.to_be_bytes());
+    out.extend_from_slice(b"MTrk");
+    out.extend_from_slice(&(track.len() as u32).to_be_bytes());
+    out.extend_from_slice(track);
+    out
+}
+
+/// to-format0：把源文件的某条轨**原始字节**抽成单轨 format 0。
+///
+/// 语义保真：事件、绝对 tick、轨内 meta（TrackName/MidiPort）与 running status
+/// 全部原样保留（不做事件重编码），因此不会出现「合并多轨导致的音符重新配对」。
+/// 默认抽取事件数最多的轨。
+fn to_format0(bytes: &[u8], opts: &[String]) -> ExitCode {
+    let mut dst: Option<String> = None;
+    let mut track_sel: Option<usize> = None;
+    let mut i = 0;
+    while i < opts.len() {
+        match opts[i].as_str() {
+            "--track" => {
+                track_sel = opts.get(i + 1).and_then(|s| s.parse().ok());
+                i += 2;
+            }
+            other if other.starts_with("--") => {
+                eprintln!("未知选项: {other}");
+                return ExitCode::FAILURE;
+            }
+            other => {
+                dst = Some(other.to_string());
+                i += 1;
+            }
+        }
+    }
+    let Some(dst) = dst else {
+        eprintln!("用法: midly-perf to-format0 <src.mid> <dst.mid> [--track N]");
+        return ExitCode::FAILURE;
+    };
+    let (division, tracks) = match split_smf_tracks(bytes) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("{e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    if tracks.is_empty() {
+        eprintln!("源文件没有 MTrk");
+        return ExitCode::FAILURE;
+    }
+    let idx = track_sel.unwrap_or_else(|| {
+        tracks
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, t)| t.len())
+            .map(|(i, _)| i)
+            .unwrap_or(0)
+    });
+    let Some(track) = tracks.get(idx) else {
+        eprintln!("轨索引 {idx} 越界（共 {} 轨）", tracks.len());
+        return ExitCode::FAILURE;
+    };
+    let out = build_format0(division, track);
+    if let Err(e) = fs::write(&dst, &out) {
+        eprintln!("写入失败 {dst}: {e}");
+        return ExitCode::FAILURE;
+    }
+    println!(
+        "src_tracks\t{}\tselected\t{}\ttrack_bytes\t{}\tout_bytes\t{}\tdivision\t{}",
+        tracks.len(),
+        idx,
+        track.len(),
+        out.len(),
+        division
+    );
+    ExitCode::SUCCESS
 }
 
 /// gen 子命令：合成 4 类缺失素材（指导书 §P2 素材矩阵）。
@@ -260,5 +372,35 @@ fn run_bench_cli(path: &str, bytes: &[u8], file_mb: f64, opts: &[String]) -> Exi
             eprintln!("{path}: {e}");
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use midly::Smf;
+
+    /// 抽轨必须是逐字节保真：MTrk 原样搬移，仅重写 MThd（format 0 / 1 轨）。
+    #[test]
+    fn format0_extraction_is_byte_faithful() {
+        let src = crate::materials::control_dense(2, 8);
+        let (division, tracks) = split_smf_tracks(&src).expect("split src");
+        assert_eq!(tracks.len(), 2);
+
+        let out = build_format0(division, tracks[1]);
+        let (out_division, out_tracks) = split_smf_tracks(&out).expect("split out");
+        assert_eq!(out_division, division);
+        assert_eq!(out_tracks.len(), 1);
+        assert_eq!(out_tracks[0], tracks[1], "抽出的 MTrk 必须逐字节一致");
+
+        let src_smf = Smf::parse(&src).expect("参考链解析源文件");
+        let out_smf = Smf::parse(&out).expect("参考链解析输出文件");
+        assert!(matches!(out_smf.header.format, midly::Format::SingleTrack));
+        assert_eq!(out_smf.tracks.len(), 1);
+        assert_eq!(
+            out_smf.tracks[0].len(),
+            src_smf.tracks[1].len(),
+            "输出轨事件数必须与源第 2 轨一致"
+        );
     }
 }
