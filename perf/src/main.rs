@@ -14,6 +14,7 @@
 
 mod bench;
 mod materials;
+mod sort_proto;
 mod sys;
 
 use std::fs;
@@ -29,6 +30,10 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
     let mode = args[0].as_str();
+    // sort-proto 的合成模式不需要文件（规模曲线用）。
+    if mode == "sort-proto" && args.get(1).map(String::as_str) == Some("--synthetic") {
+        return run_sort_proto(&[], &args[1..]);
+    }
     let path = &args[1];
     // gen 只需输出目录，不读文件。
     if mode == "gen" {
@@ -46,6 +51,7 @@ fn main() -> ExitCode {
     match mode {
         "characterize" => characterize(path, &bytes, file_mb),
         "to-format0" => to_format0(&bytes, &args[2..]),
+        "sort-proto" => run_sort_proto(&bytes, &args[2..]),
         "bench" => run_bench_cli(path, &bytes, file_mb, &args[2..]),
         _ => {
             eprintln!("未知模式: {mode}");
@@ -376,6 +382,103 @@ fn run_bench_cli(path: &str, bytes: &[u8], file_mb: f64, opts: &[String]) -> Exi
             ExitCode::FAILURE
         }
     }
+}
+
+/// sort-proto：巨轨音符排序候选实现对比（稳定/不稳定/基数 + 已排序快速路径）。
+fn run_sort_proto(bytes: &[u8], opts: &[String]) -> ExitCode {
+    let mut runs = 5usize;
+    let mut synthetic: Option<usize> = None;
+    let mut i = 0;
+    while i < opts.len() {
+        match opts[i].as_str() {
+            "--runs" => {
+                runs = opts.get(i + 1).and_then(|s| s.parse().ok()).unwrap_or(5);
+                i += 2;
+            }
+            "--synthetic" => {
+                synthetic = opts.get(i + 1).and_then(|s| s.parse().ok());
+                i += 2;
+            }
+            other => {
+                eprintln!("未知选项: {other}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+    let pristine = match synthetic {
+        Some(n) => sort_proto::synthetic_notes(n),
+        None => match sort_proto::largest_track(bytes) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("{e}");
+                return ExitCode::FAILURE;
+            }
+        },
+    };
+    if pristine.is_empty() {
+        eprintln!("没有音符");
+        return ExitCode::FAILURE;
+    }
+    let note_bytes = pristine.len() * core::mem::size_of::<midly::loader::PackedNote>();
+    let (already_sorted, max_tick) = sort_proto::scan_sorted_and_max(&pristine);
+
+    // 正确性对拍：radix/candidate 必须与稳定排序逐元素一致；unstable 仅要求有序。
+    let stable_ok = sort_proto::verify_stable(&pristine, |mut v| {
+        sort_proto::sort_stable(&mut v);
+        v
+    });
+    let radix_ok = sort_proto::verify_stable(&pristine, |mut v| {
+        sort_proto::radix_sort(&mut v, max_tick);
+        v
+    });
+    let candidate_ok = sort_proto::verify_stable(&pristine, |mut v| {
+        sort_proto::sort_candidate(&mut v);
+        v
+    });
+    let unstable_ok = sort_proto::verify_sorted(&pristine, |mut v| {
+        sort_proto::sort_unstable(&mut v);
+        v
+    });
+    println!(
+        "correctness\tstable={stable_ok}\tradix={radix_ok}\tcandidate={candidate_ok}\tunstable={unstable_ok}"
+    );
+    if !(stable_ok && radix_ok && candidate_ok && unstable_ok) {
+        return ExitCode::FAILURE;
+    }
+
+    let t_stable = sort_proto::bench_variant("stable", &pristine, runs, |mut v| {
+        sort_proto::sort_stable(&mut v);
+        0
+    });
+    let t_unstable = sort_proto::bench_variant("unstable", &pristine, runs, |mut v| {
+        sort_proto::sort_unstable(&mut v);
+        0
+    });
+    let t_radix = sort_proto::bench_variant("radix", &pristine, runs, |mut v| {
+        sort_proto::radix_sort(&mut v, max_tick)
+    });
+    let t_candidate = sort_proto::bench_variant("candidate", &pristine, runs, |mut v| {
+        sort_proto::sort_candidate(&mut v)
+    });
+    let t_check = sort_proto::bench_variant("is_sorted_check", &pristine, runs, |v| {
+        std::hint::black_box(sort_proto::is_sorted(&v));
+        0
+    });
+
+    println!(
+        "summary\tnotes={}\tnote_bytes={note_bytes}\tmax_tick={max_tick}\talready_sorted={already_sorted}",
+        pristine.len()
+    );
+    for t in [&t_stable, &t_unstable, &t_radix, &t_candidate, &t_check] {
+        println!(
+            "variant\t{}\tmin={:.2}ms\tmed={:.2}ms\tscratch={:.1}MB",
+            t.label,
+            t.min_ms,
+            t.med_ms,
+            t.scratch_bytes as f64 / (1024.0 * 1024.0)
+        );
+    }
+    ExitCode::SUCCESS
 }
 
 #[cfg(test)]

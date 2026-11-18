@@ -1,0 +1,17 @@
+prototype	metric	n	stable_ms	unstable_ms	radix_ms	candidate_ms	scratch_mb	note
+A5	synthetic-scale	262144	6.45	5.67	2.05	2.00	3.5	未排序；load 6%
+A5	synthetic-scale	524288	13.86	11.95	5.64	5.76	7.0	-
+A5	synthetic-scale	1048576	29.42	25.13	11.04	11.43	14.0	-
+A5	synthetic-scale	2097152	65.01	53.36	21.93	22.51	28.0	-
+A5	synthetic-scale	4194304	132.28	111.15	58.47	59.85	56.0	-
+A5	synthetic-scale	8388608	287.67	231.83	136.53	139.49	112.0	-
+A5	real-giant-track	8795520	330.24	210.34	80.23	82.50	117.4	format0 抽轨；load 57%
+A5	real-already-sorted	1000000	0.62	0.61	10.73	0.58	0.0	gen-single-giant 已排序（标准库自适应）
+A5	real-already-sorted	276496	0.17	0.15	2.17	-	0.0	Pi 最大轨已排序
+A5	e2e-164m-before	164206462	753.96	-	-	-	-	median，load 11%
+A5	e2e-164m-after-radix-1m	164206462	-	-	-	557.38	-	median，-26%；min 721.99→535.23
+A5	e2e-164m-peak	164206462	3444.3	-	-	3683.6	-	+7%（MB，同批）
+A5	e2e-pi-before	3141592	8.42	-	-	-	-	median
+A5	e2e-pi-after-radix-1m	3141592	-	-	-	8.80	-	+4.5%（min 相同 7.74）
+A5	e2e-pi-after-radix-4k	3141592	-	-	-	10.44	-	阈值 4096 时 +24%（小轨回退，已证伪）
+A5	digest-164m	164206462	-	-	-	-	-	radix 与稳定排序逐字段一致（combined=3e919e3b…）
