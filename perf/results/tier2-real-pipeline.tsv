@@ -1,0 +1,37 @@
+label	file	warmup	runs	wall_median_ms	wall_min_ms	wall_max_ms	cpu_median_ms	peak_ws_mb	notes	controls	tracks	total_ticks	file_mb
+tier2-before	F:\midly-fork\test-asset\Pi.mid	2	5	20.380	18.784	20.948	46.875	79.93	3141592	1128	30	68016	24.072
+tier2-before	F:\midly-fork\test-asset\熠星始芒：StarT audio 210k v1.1fix.mid	2	5	5.193	4.600	5.425	0.000	22.28	210937	217487	40	3093120	2.494
+tier2-before	F:\midly-fork\test-asset\Clementi.mid	5	20	0.055	0.040	0.197	0.000	6.30	666	0	3	36360	0.004
+tier2-after	F:\midly-fork\test-asset\Pi.mid	2	5	13.121	12.464	13.868	171.875	85.39	3141592	1128	30	68016	24.072
+tier2-after	F:\midly-fork\test-asset\熠星始芒：StarT audio 210k v1.1fix.mid	2	5	6.647	5.855	7.496	0.000	23.05	210937	217487	40	3093120	2.494
+tier2-after	F:\midly-fork\test-asset\Clementi.mid	5	20	0.060	0.043	0.204	0.000	6.89	666	0	3	36360	0.004
+tier2-before	F:\midly-fork\test-asset\Pi.mid	2	5	23.258	21.766	26.601	78.125	82.91	3141592	1128	30	68016	24.072
+tier2-before	F:\midly-fork\test-asset\熠星始芒：StarT audio 210k v1.1fix.mid	2	5	5.693	5.463	6.440	0.000	22.28	210937	217487	40	3093120	2.494
+tier2-before	F:\midly-fork\test-asset\Clementi.mid	5	20	0.048	0.033	0.146	0.000	6.44	666	0	3	36360	0.004
+tier2-after	F:\midly-fork\test-asset\Pi.mid	2	5	16.298	15.004	16.852	93.750	80.59	3141592	1128	30	68016	24.072
+tier2-after	F:\midly-fork\test-asset\熠星始芒：StarT audio 210k v1.1fix.mid	2	5	6.872	6.082	6.968	15.625	22.26	210937	217487	40	3093120	2.494
+tier2-after	F:\midly-fork\test-asset\Clementi.mid	5	20	0.051	0.044	0.177	0.000	6.04	666	0	3	36360	0.004
+tier2-before	F:\midly-fork\test-asset\Pi.mid	2	5	20.910	18.758	32.439	78.125	78.34	3141592	1128	30	68016	24.072
+tier2-before	F:\midly-fork\test-asset\熠星始芒：StarT audio 210k v1.1fix.mid	2	5	5.094	4.901	5.693	0.000	23.39	210937	217487	40	3093120	2.494
+tier2-before	F:\midly-fork\test-asset\Clementi.mid	5	20	0.040	0.032	0.107	0.000	6.04	666	0	3	36360	0.004
+tier2-after	F:\midly-fork\test-asset\Pi.mid	2	5	13.495	11.371	15.586	0.000	80.04	3141592	1128	30	68016	24.072
+tier2-after	F:\midly-fork\test-asset\熠星始芒：StarT audio 210k v1.1fix.mid	2	5	5.694	5.496	5.862	0.000	23.13	210937	217487	40	3093120	2.494
+tier2-after	F:\midly-fork\test-asset\Clementi.mid	5	20	0.042	0.032	0.113	0.000	6.25	666	0	3	36360	0.004
+tier2-before	F:\midly-fork\test-asset\Pi.mid	2	5	19.433	19.380	19.829	125.000	81.06	3141592	1128	30	68016	24.072
+tier2-before	F:\midly-fork\test-asset\熠星始芒：StarT audio 210k v1.1fix.mid	3	9	5.149	4.834	5.483	0.000	22.31	210937	217487	40	3093120	2.494
+tier2-before	F:\midly-fork\test-asset\Clementi.mid	5	20	0.041	0.033	0.143	0.000	6.14	666	0	3	36360	0.004
+tier2-after	F:\midly-fork\test-asset\Pi.mid	2	5	14.537	13.285	15.945	15.625	82.75	3141592	1128	30	68016	24.072
+tier2-after	F:\midly-fork\test-asset\熠星始芒：StarT audio 210k v1.1fix.mid	3	9	5.455	5.169	5.978	0.000	24.17	210937	217487	40	3093120	2.494
+tier2-after	F:\midly-fork\test-asset\Clementi.mid	5	20	0.044	0.039	0.081	0.000	6.13	666	0	3	36360	0.004
+tier2-before	F:\midly-fork\test-asset\Pi.mid	2	5	19.174	18.902	19.706	109.375	82.44	3141592	1128	30	68016	24.072
+tier2-before	F:\midly-fork\test-asset\熠星始芒：StarT audio 210k v1.1fix.mid	3	9	5.110	4.725	5.543	0.000	23.92	210937	217487	40	3093120	2.494
+tier2-before	F:\midly-fork\test-asset\Clementi.mid	5	20	0.048	0.034	0.122	0.000	6.16	666	0	3	36360	0.004
+tier2-after	F:\midly-fork\test-asset\Pi.mid	2	5	15.762	12.243	16.400	125.000	82.79	3141592	1128	30	68016	24.072
+tier2-after	F:\midly-fork\test-asset\熠星始芒：StarT audio 210k v1.1fix.mid	3	9	5.476	5.248	6.480	0.000	23.84	210937	217487	40	3093120	2.494
+tier2-after	F:\midly-fork\test-asset\Clementi.mid	5	20	0.042	0.036	0.088	0.000	6.14	666	0	3	36360	0.004
+tier2-before	F:\midly-fork\test-asset\Pi.mid	2	5	19.267	18.526	24.037	31.250	82.81	3141592	1128	30	68016	24.072
+tier2-before	F:\midly-fork\test-asset\熠星始芒：StarT audio 210k v1.1fix.mid	3	9	5.202	5.030	5.688	0.000	23.89	210937	217487	40	3093120	2.494
+tier2-before	F:\midly-fork\test-asset\Clementi.mid	5	20	0.050	0.040	0.153	0.000	6.12	666	0	3	36360	0.004
+tier2-after	F:\midly-fork\test-asset\Pi.mid	2	5	14.497	12.883	16.777	62.500	80.50	3141592	1128	30	68016	24.072
+tier2-after	F:\midly-fork\test-asset\熠星始芒：StarT audio 210k v1.1fix.mid	3	9	5.562	5.120	6.047	0.000	24.41	210937	217487	40	3093120	2.494
+tier2-after	F:\midly-fork\test-asset\Clementi.mid	5	20	0.047	0.038	0.094	0.000	6.04	666	0	3	36360	0.004

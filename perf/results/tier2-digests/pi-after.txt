@@ -1,0 +1,1 @@
+combined=b746d97d589b48e8	header=d2eb889b454cc0c1	notes=48846419c05111fc	controls=8075f20bc926cca5	tempo=b0ef9d5b6f5acc37	time_sigs=8c743e052140adac	key_sigs=8c81d205214c3384	lyrics=a8c7f832281a39c5	markers=a8c7f832281a39c5	text_meta=a8c7f832281a39c5	sysex=a8c7f832281a39c5	track_meta=15a5c06862449f0b	notes_n=3141592	controls_n=1128	tracks=30	total_ticks=68016

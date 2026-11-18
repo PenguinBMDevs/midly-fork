@@ -12,6 +12,10 @@ description = "lumino-midly P2 性能基线测量台（指导书 docs/research/l
 # lumino_midly 不同，显式别名保证跨版本 extern 名一致（与主仓约定相同）。
 midly = { version = "0.6", package = "lumino-midly", default-features = false, features = ["std", "alloc", "memmap"] }
 rayon = { version = "1", optional = true }
+# Tier2 测量台（--features lumino）：真实 lumino 主链路 MidiDocument::from_notes_bytes。
+# 该 path 依赖要求同机存在 ../../lumino-rs 检出（cargo 解析清单时会检查路径）；
+# 关闭特性时不会编译它，midly-perf 本体不受影响。
+lumino-midi-model = { path = "../../lumino-rs/crates/audio/midi-model", optional = true }
 
 [features]
 default = ["parallel", "text-events"]
@@ -20,6 +24,14 @@ parallel = ["midly/parallel", "dep:rayon"]
 # 0.6.3 的 TrackAllEvents 无 text_events 字段（0.6.4 才加入）；
 # 对 0.6.3 基线跑分时关闭：--no-default-features --features parallel
 text-events = []
+# Tier2 真实链路 bench（lumino-bench）
+lumino = ["dep:lumino-midi-model"]
+
+# Tier2 测量台：lumino 主链路端到端（需 --features lumino）
+[[bin]]
+name = "lumino-bench"
+path = "src/bin/lumino_bench.rs"
+required-features = ["lumino"]
 
 [patch.crates-io]
 lumino-midly = { path = ".." }
