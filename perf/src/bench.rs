@@ -190,7 +190,19 @@ fn parallel_track_output(mut ev: TrackAllEvents) -> ParTrackOutput {
     // 稳定排序 + 每轨产物保留 + 文本复制。归并（extend / arena 拼接）留到锁外串行阶段。
     ev.notes.sort_by_key(|n| n.start_tick);
     let notes = ev.notes.clone();
-    let mut text = Vec::new();
+    // 预分配文本 arena：SysEx 密集素材下避免反复倍增重分配（下游同样会这么做）。
+    let mut text_bytes = 0usize;
+    for t in ev.lyrics.iter().chain(ev.markers.iter()) {
+        text_bytes += t.text.len();
+    }
+    #[cfg(feature = "text-events")]
+    for t in &ev.text_events {
+        text_bytes += t.text.len();
+    }
+    for s in &ev.sys_ex {
+        text_bytes += s.data.len();
+    }
+    let mut text = Vec::with_capacity(text_bytes);
     for t in ev.lyrics.iter().chain(ev.markers.iter()) {
         text.extend_from_slice(t.text);
     }
@@ -279,6 +291,9 @@ pub fn run_bench(bytes: &[u8], file_size: u64, cfg: &BenchConfig) -> Result<Benc
                 let slots = collect();
                 let slots = slots.map_err(|e| format!("解析失败: {e:?}"))?;
                 let merge0 = Instant::now();
+                // 归并前一次性预留全局 arena，避免按轨拼接时反复倍增。
+                let text_bytes: usize = slots.iter().map(|s| s.text.len()).sum();
+                sink.text_arena.reserve(text_bytes);
                 for (idx, slot) in slots.into_iter().enumerate() {
                     sink.merge_par(idx, slot);
                 }

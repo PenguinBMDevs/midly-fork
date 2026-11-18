@@ -1,6 +1,7 @@
 //! midly-perf：P2 性能基线测量台 CLI。
 //!
 //! 用法：
+//!   midly-perf gen <out_dir>
 //!   midly-perf characterize <file.mid>
 //!   midly-perf bench <file.mid> [--threads N] [--warmup W] [--runs R]
 //!                  [--callback minimal|realistic|realistic-par] [--label L] [--out results.tsv]
@@ -11,6 +12,7 @@
 //!   serial 构建：cargo run --release --no-default-features -- bench ...
 
 mod bench;
+mod materials;
 mod sys;
 
 use std::fs;
@@ -22,11 +24,15 @@ use midly::loader::extract_all_events_per_track_streaming_from_bytes;
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.len() < 2 {
-        eprintln!("用法: midly-perf <characterize|bench> <file.mid> [选项]");
+        eprintln!("用法: midly-perf <gen|characterize|bench> <path> [选项]");
         return ExitCode::FAILURE;
     }
     let mode = args[0].as_str();
     let path = &args[1];
+    // gen 只需输出目录，不读文件。
+    if mode == "gen" {
+        return gen_cli(path);
+    }
     let bytes = match fs::read(path) {
         Ok(b) => b,
         Err(e) => {
@@ -41,6 +47,25 @@ fn main() -> ExitCode {
         "bench" => run_bench_cli(path, &bytes, file_mb, &args[2..]),
         _ => {
             eprintln!("未知模式: {mode}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// gen 子命令：合成 4 类缺失素材（指导书 §P2 素材矩阵）。
+fn gen_cli(out_dir: &str) -> ExitCode {
+    match materials::generate_all(std::path::Path::new(out_dir)) {
+        Ok(items) => {
+            let mut total = 0usize;
+            for (name, size) in &items {
+                println!("{name}\t{size}\t{:.3} MB", *size as f64 / (1024.0 * 1024.0));
+                total += size;
+            }
+            println!("total\t{total}\t{:.3} MB", total as f64 / (1024.0 * 1024.0));
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("生成失败 {out_dir}: {e}");
             ExitCode::FAILURE
         }
     }
