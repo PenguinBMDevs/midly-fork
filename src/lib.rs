@@ -252,10 +252,11 @@ pub use crate::mmap::{FileStats, MmapEventIter, MmapSmf, MmapTrack};
 #[cfg(feature = "alloc")]
 pub use crate::loader::{
     NoteIndex, PackedControlEvent, PackedKeySignatureEvent, PackedNote, PackedSysExEvent,
-    PackedTextEvent, PackedTimeSignatureEvent, TrackAllEvents, TrackExtractResult, extract_notes,
+    PackedTextEvent, PackedTextMetaEvent, PackedTimeSignatureEvent, TrackAllEvents,
+    TrackExtractResult, extract_all_events_per_track_streaming_from_bytes, extract_notes,
     extract_notes_and_control_events, extract_notes_and_control_events_from_bytes,
     extract_notes_and_control_events_per_track_from_bytes, extract_notes_from_bytes,
-    extract_notes_indexed, extract_all_events_per_track_streaming_from_bytes,
+    extract_notes_indexed,
 };
 
 #[cfg(all(feature = "std", feature = "memmap"))]

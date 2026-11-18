@@ -25,7 +25,7 @@ pub(crate) enum MidiEvent<'a> {
     NoteOff {
         channel: u8,
         key: u8,
-        _velocity: u8,
+        velocity: u8,
     },
     ControlChange {
         channel: u8,
@@ -39,6 +39,17 @@ pub(crate) enum MidiEvent<'a> {
     PitchBend {
         channel: u8,
         bend: u16,
+    },
+    /// 复音触后（Polyphonic Aftertouch, 0xA0)：单键压力
+    PolyAftertouch {
+        channel: u8,
+        key: u8,
+        velocity: u8,
+    },
+    /// 通道触后（Channel Aftertouch, 0xD0)：整通道压力
+    ChannelAftertouch {
+        channel: u8,
+        velocity: u8,
     },
     Meta {
         event_type: u8,
@@ -109,7 +120,7 @@ impl<'a> TrackIter<'a> {
                 MidiEvent::NoteOff {
                     channel: status & 0x0F,
                     key,
-                    _velocity: vel,
+                    velocity: vel,
                 }
             }
             0x90 => {
@@ -131,7 +142,7 @@ impl<'a> TrackIter<'a> {
                     MidiEvent::NoteOff {
                         channel: status & 0x0F,
                         key,
-                        _velocity: 0,
+                        velocity,
                     }
                 } else {
                     MidiEvent::NoteOn {
@@ -161,6 +172,35 @@ impl<'a> TrackIter<'a> {
                     MidiEvent::SysEx { data }
                 } else {
                     MidiEvent::Other
+                }
+            }
+            0xA0 => {
+                let (key, velocity) = if self.offset + 2 <= len {
+                    unsafe {
+                        (
+                            *self.data.get_unchecked(self.offset),
+                            *self.data.get_unchecked(self.offset + 1),
+                        )
+                    }
+                } else {
+                    (
+                        self.data.get(self.offset).copied().unwrap_or(0),
+                        self.data.get(self.offset + 1).copied().unwrap_or(0),
+                    )
+                };
+                self.offset = self.offset.saturating_add(2);
+                MidiEvent::PolyAftertouch {
+                    channel: status & 0x0F,
+                    key,
+                    velocity,
+                }
+            }
+            0xD0 => {
+                let velocity = self.data.get(self.offset).copied().unwrap_or(0);
+                self.offset = self.offset.saturating_add(1);
+                MidiEvent::ChannelAftertouch {
+                    channel: status & 0x0F,
+                    velocity,
                 }
             }
             0xB0 => {
@@ -214,10 +254,16 @@ impl<'a> TrackIter<'a> {
                 }
             }
             _ => {
-                // Skip the data bytes for channel messages we don't care about.
+                // 不关心的通道消息跳过数据字节。注意各状态字节的数据长度不同：
+                // 0xA0/0xD0 已在上方独立解码，到这里只剩理论不可达的残留；
+                // 0xF0 系统一律按 Other 处理（Meta/SysEx 在 0xF0 分支已返回）。
+                // 0xD0 仅 1 数据字节——此前误跳 2 字节会导致后续解析错位。
                 match status & 0xF0 {
-                    0xA0 | 0xD0 => {
+                    0xA0 => {
                         self.offset = self.offset.saturating_add(2);
+                    }
+                    0xD0 => {
+                        self.offset = self.offset.saturating_add(1);
                     }
                     _ => {}
                 }

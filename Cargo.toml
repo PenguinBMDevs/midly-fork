@@ -1,6 +1,6 @@
 [package]
 name = "lumino-midly"
-version = "0.6.2"
+version = "0.6.5"
 edition = "2024"
 authors = ["negamartin", "Enderman-bm"]
 description = "Fast MIDI decoder and encoder both for .mid files and real-time MIDI events"

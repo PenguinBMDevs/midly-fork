@@ -53,11 +53,14 @@ use rayon::prelude::*;
 
 /// A compact, packed representation of a MIDI note.
 ///
-/// This structure uses only **13 bytes** compared to 24+ bytes for a typical
-/// `(start_tick, end_tick, key, velocity, channel, track)` tuple, saving ~46% memory.
+/// This structure uses only **14 bytes** compared to 24+ bytes for a typical
+/// `(start_tick, end_tick, key, velocity, channel, track)` tuple.
 ///
 /// The `#[repr(C, packed)]` layout ensures optimal cache efficiency when
 /// processing large MIDI files with millions of notes.
+///
+/// `release_velocity` (NoteOff vel) defaults to 0 — 黑乐谱场景绝大多数为 0，
+/// 如需极致内存可由调用方稀疏存储非零值。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(C, packed)]
 pub struct PackedNote {
@@ -67,8 +70,10 @@ pub struct PackedNote {
     pub end_tick: u32,
     /// MIDI key number (0-127) (1 byte)
     pub key: u8,
-    /// Note velocity (0-127) (1 byte)
+    /// Note attack velocity / NoteOn velocity (0-127) (1 byte)
     pub velocity: u8,
+    /// Note release velocity / NoteOff velocity (0-127) (1 byte)
+    pub release_velocity: u8,
     /// MIDI channel (0-15) (1 byte)
     pub channel: u8,
     /// Track index, supports up to 65535 tracks (2 bytes)
@@ -86,6 +91,8 @@ pub struct PackedNote {
 ///   - CC: `(controller << 8) | value`
 ///   - PC: `program`
 ///   - PB: raw 14-bit value (0..16383)
+///   - ChannelAT: `velocity`
+///   - PolyAT: `(key << 8) | velocity`
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(C, packed)]
 pub struct PackedControlEvent {
@@ -93,7 +100,7 @@ pub struct PackedControlEvent {
     pub tick: u32,
     /// Track index, supports up to 65535 tracks (2 bytes)
     pub track: u16,
-    /// Event kind: 0=CC, 1=PC, 2=PB (1 byte)
+    /// Event kind: 0=CC, 1=PC, 2=PB, 3=ChannelAT, 4=PolyAT (1 byte)
     pub kind: u8,
     /// MIDI channel (0-15) (1 byte)
     pub channel: u8,
@@ -138,6 +145,30 @@ impl PackedControlEvent {
         }
     }
 
+    /// Create a new packed channel aftertouch event.
+    #[inline]
+    pub fn channel_aftertouch(tick: u32, track: u16, channel: u8, velocity: u8) -> Self {
+        Self {
+            tick,
+            track,
+            kind: 3,
+            channel: channel & 0x0F,
+            param: (velocity & 0x7F) as u16,
+        }
+    }
+
+    /// Create a new packed polyphonic aftertouch event.
+    #[inline]
+    pub fn poly_aftertouch(tick: u32, track: u16, channel: u8, key: u8, velocity: u8) -> Self {
+        Self {
+            tick,
+            track,
+            kind: 4,
+            channel: channel & 0x0F,
+            param: (((key & 0x7F) as u16) << 8) | ((velocity & 0x7F) as u16),
+        }
+    }
+
     /// Decode parameter as CC controller and value.
     #[inline]
     pub fn as_control_change(&self) -> (u8, u8) {
@@ -155,6 +186,18 @@ impl PackedControlEvent {
     pub fn as_pitch_bend(&self) -> f32 {
         let raw = self.param as i16 - 8192;
         raw as f32 / 8192.0
+    }
+
+    /// Decode parameter as channel aftertouch velocity.
+    #[inline]
+    pub fn as_channel_aftertouch(&self) -> u8 {
+        (self.param & 0x7F) as u8
+    }
+
+    /// Decode parameter as polyphonic aftertouch (key, velocity).
+    #[inline]
+    pub fn as_poly_aftertouch(&self) -> (u8, u8) {
+        ((self.param >> 8) as u8, (self.param & 0xFF) as u8)
     }
 }
 
@@ -236,6 +279,41 @@ impl<'a> PackedTextEvent<'a> {
     }
 }
 
+/// A lightweight borrowed text meta event with its MIDI meta type.
+///
+/// Covers text-class metas that previously fell into `_ => {}` and were
+/// silently dropped: `0x01` Text, `0x02` Copyright, `0x04` InstrumentName,
+/// `0x07` CuePoint, `0x08` ProgramName, `0x09` DeviceName.
+/// Excluded by design: `0x03` TrackName (handled by `scan_track_names`
+/// downstream), `0x05`/`0x06` (lyrics/markers keep their own channels).
+///
+/// Payload is **borrowed** like [`PackedTextEvent`]: callers copy only what
+/// they persist.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct PackedTextMetaEvent<'a> {
+    /// Event time in MIDI ticks
+    pub tick: u32,
+    /// Track index
+    pub track: u16,
+    /// MIDI meta type (0x01 / 0x02 / 0x04 / 0x07 / 0x08 / 0x09)
+    pub meta_type: u8,
+    /// Raw text payload (encoding depends on the source file)
+    pub text: &'a [u8],
+}
+
+impl<'a> PackedTextMetaEvent<'a> {
+    /// Create a new borrowed typed text event.
+    #[inline]
+    pub fn new(tick: u32, track: u16, meta_type: u8, text: &'a [u8]) -> Self {
+        Self {
+            tick,
+            track,
+            meta_type,
+            text,
+        }
+    }
+}
+
 /// A lightweight borrowed System Exclusive event.
 ///
 /// The data payload is **borrowed** from the original MIDI byte slice. SysEx events can
@@ -260,17 +338,57 @@ impl<'a> PackedSysExEvent<'a> {
 }
 
 impl PackedNote {
-    /// Create a new packed note.
+    /// Create a new packed note (release velocity defaults to 0).
+    ///
+    /// 保持 6 参签名兼容历史调用方；需要释放力度时用
+    /// [`Self::new_with_release`] 或 [`Self::with_release_velocity`]。
     #[inline]
-    pub fn new(start_tick: u32, end_tick: u32, key: u8, velocity: u8, channel: u8, track: u16) -> Self {
+    pub fn new(
+        start_tick: u32,
+        end_tick: u32,
+        key: u8,
+        velocity: u8,
+        channel: u8,
+        track: u16,
+    ) -> Self {
         Self {
             start_tick,
             end_tick,
             key,
             velocity: velocity & 0x7F,
+            release_velocity: 0,
             channel: channel & 0x0F,
             track,
         }
+    }
+
+    /// Create a new packed note with explicit release (NoteOff) velocity.
+    #[inline]
+    pub fn new_with_release(
+        start_tick: u32,
+        end_tick: u32,
+        key: u8,
+        velocity: u8,
+        release_velocity: u8,
+        channel: u8,
+        track: u16,
+    ) -> Self {
+        Self {
+            start_tick,
+            end_tick,
+            key,
+            velocity: velocity & 0x7F,
+            release_velocity: release_velocity & 0x7F,
+            channel: channel & 0x0F,
+            track,
+        }
+    }
+
+    /// Builder: attach a release (NoteOff) velocity.
+    #[inline]
+    pub fn with_release_velocity(mut self, release_velocity: u8) -> Self {
+        self.release_velocity = release_velocity & 0x7F;
+        self
     }
 
     /// Get note duration in ticks.
@@ -471,11 +589,16 @@ impl NoteAccumulator {
         }
 
         if let Some((start_tick, prev_velocity)) = self.active_notes[ch][key_idx].take() {
-            self.notes.push(PackedNote::new(
+            // 重触发关闭旧音符：新 NoteOn 的 velocity 是新音符的攻击力度，
+            // 不是旧音符的释放力度；旧音符释放力度记 0。
+            // 只有 velocity == 0（即 NoteOn-as-NoteOff）时才透传释放力度（恒为 0）。
+            let release = if velocity == 0 { velocity } else { 0 };
+            self.notes.push(PackedNote::new_with_release(
                 start_tick,
                 self.current_tick,
                 key,
                 prev_velocity,
+                release,
                 channel,
                 self.track_idx,
             ));
@@ -486,18 +609,19 @@ impl NoteAccumulator {
         }
     }
 
-    fn note_off(&mut self, key: u8, channel: u8) {
+    fn note_off(&mut self, key: u8, channel: u8, release_velocity: u8) {
         let ch = channel.min(15) as usize;
         let key_idx = key as usize;
         if key_idx >= 256 {
             return;
         }
         if let Some((start_tick, velocity)) = self.active_notes[ch][key_idx].take() {
-            self.notes.push(PackedNote::new(
+            self.notes.push(PackedNote::new_with_release(
                 start_tick,
                 self.current_tick,
                 key,
                 velocity,
+                release_velocity,
                 channel,
                 self.track_idx,
             ));
@@ -582,6 +706,27 @@ impl ControlEventAccumulator {
             self.track_idx,
             channel,
             bend,
+        ));
+    }
+
+    #[inline]
+    fn channel_aftertouch(&mut self, channel: u8, velocity: u8) {
+        self.events.push(PackedControlEvent::channel_aftertouch(
+            self.current_tick,
+            self.track_idx,
+            channel,
+            velocity,
+        ));
+    }
+
+    #[inline]
+    fn poly_aftertouch(&mut self, channel: u8, key: u8, velocity: u8) {
+        self.events.push(PackedControlEvent::poly_aftertouch(
+            self.current_tick,
+            self.track_idx,
+            channel,
+            key,
+            velocity,
         ));
     }
 
@@ -729,7 +874,7 @@ fn parse_track_notes(track: &[TrackEvent], track_idx: u16) -> (Vec<PackedNote>, 
                     MidiMessage::NoteOn { key, vel } => {
                         acc.note_on(*key, vel.as_int(), ch);
                     }
-                    MidiMessage::NoteOff { key, vel: _ } => acc.note_off(*key, ch),
+                    MidiMessage::NoteOff { key, vel } => acc.note_off(*key, ch, vel.as_int()),
                     _ => {}
                 }
             }
@@ -763,7 +908,7 @@ fn parse_track_notes_and_control_events(
                     MidiMessage::NoteOn { key, vel } => {
                         note_acc.note_on(*key, vel.as_int(), ch);
                     }
-                    MidiMessage::NoteOff { key, vel: _ } => note_acc.note_off(*key, ch),
+                    MidiMessage::NoteOff { key, vel } => note_acc.note_off(*key, ch, vel.as_int()),
                     MidiMessage::Controller { controller, value } => {
                         ctrl_acc.control_change(ch, controller.as_int(), value.as_int());
                     }
@@ -773,6 +918,12 @@ fn parse_track_notes_and_control_events(
                     MidiMessage::PitchBend { bend } => {
                         let bend_u16 = bend.as_int() as u16;
                         ctrl_acc.pitch_bend(ch, bend_u16);
+                    }
+                    MidiMessage::Aftertouch { key, vel } => {
+                        ctrl_acc.poly_aftertouch(ch, key.as_int(), vel.as_int());
+                    }
+                    MidiMessage::ChannelAftertouch { vel } => {
+                        ctrl_acc.channel_aftertouch(ch, vel.as_int());
                     }
                     _ => {}
                 }
@@ -1045,11 +1196,13 @@ pub fn extract_notes_and_control_events_per_track_from_bytes(
 
     let results: Vec<TrackExtractResult> = track_results
         .into_iter()
-        .map(|(notes, tempo_changes, control_events)| TrackExtractResult {
-            notes,
-            tempo_changes,
-            control_events,
-        })
+        .map(
+            |(notes, tempo_changes, control_events)| TrackExtractResult {
+                notes,
+                tempo_changes,
+                control_events,
+            },
+        )
         .collect();
 
     Ok(results)
@@ -1072,7 +1225,13 @@ pub fn extract_notes_and_control_events_per_track_streaming_from_bytes<F>(
     track_handler: F,
 ) -> crate::Result<()>
 where
-    F: FnMut(usize, Vec<PackedNote>, Vec<(u32, f32)>, Vec<PackedControlEvent>, Vec<PackedTimeSignatureEvent>) + Send,
+    F: FnMut(
+            usize,
+            Vec<PackedNote>,
+            Vec<(u32, f32)>,
+            Vec<PackedControlEvent>,
+            Vec<PackedTimeSignatureEvent>,
+        ) + Send,
 {
     let data = crate::ump::preprocess_smf(bytes);
     let (_header, tracks_count, _division, raw) = fast_midi::parse_header(&data)?;
@@ -1083,12 +1242,24 @@ where
     #[cfg(feature = "parallel")]
     {
         use rayon::prelude::*;
-        tracks.into_par_iter().enumerate().for_each(|(track_idx, events)| {
-            let (notes, tempo_changes, control_events, time_signatures) =
-                parse_fast_track_notes_control_and_time_signature_events(events, track_idx as u16);
-            let mut h = handler.lock().unwrap_or_else(|e| e.into_inner());
-            h(track_idx, notes, tempo_changes, control_events, time_signatures);
-        });
+        tracks
+            .into_par_iter()
+            .enumerate()
+            .for_each(|(track_idx, events)| {
+                let (notes, tempo_changes, control_events, time_signatures) =
+                    parse_fast_track_notes_control_and_time_signature_events(
+                        events,
+                        track_idx as u16,
+                    );
+                let mut h = handler.lock().unwrap_or_else(|e| e.into_inner());
+                h(
+                    track_idx,
+                    notes,
+                    tempo_changes,
+                    control_events,
+                    time_signatures,
+                );
+            });
     }
     #[cfg(not(feature = "parallel"))]
     {
@@ -1096,7 +1267,13 @@ where
         for (track_idx, events) in tracks.into_iter().enumerate() {
             let (notes, tempo_changes, control_events, time_signatures) =
                 parse_fast_track_notes_control_and_time_signature_events(events, track_idx as u16);
-            handler(track_idx, notes, tempo_changes, control_events, time_signatures);
+            handler(
+                track_idx,
+                notes,
+                tempo_changes,
+                control_events,
+                time_signatures,
+            );
         }
     }
 
@@ -1106,7 +1283,7 @@ where
 /// All events extracted from a single track, using borrowed slices for text/SysEx data.
 ///
 /// This is the most complete extraction interface in `midly`. It passes **borrowed**
-/// byte slices for lyrics, markers and SysEx so that a 100 GB MIDI file with large
+/// byte slices for lyrics, markers, text-class metas and SysEx so that a 100 GB MIDI file with large
 /// SysEx payloads does not force midly to allocate. The consumer copies only what it
 /// needs to persist.
 #[cfg(feature = "alloc")]
@@ -1126,8 +1303,20 @@ pub struct TrackAllEvents<'a> {
     pub lyrics: Vec<PackedTextEvent<'a>>,
     /// Marker meta events (type 0x06), borrowed from the original byte slice.
     pub markers: Vec<PackedTextEvent<'a>>,
+    /// Text-class meta events (0x01 Text / 0x02 Copyright / 0x04 InstrumentName /
+    /// 0x07 CuePoint / 0x08 ProgramName / 0x09 DeviceName), borrowed.
+    /// Each entry carries its own `meta_type` so callers can route or write back
+    /// without a second parse pass.
+    pub text_events: Vec<PackedTextMetaEvent<'a>>,
     /// System Exclusive events (0xF0 / 0xF7), borrowed from the original byte slice.
     pub sys_ex: Vec<PackedSysExEvent<'a>>,
+    /// MIDI port meta event (FF 21) of this track — the **first** occurrence, if any.
+    ///
+    /// The MIDI 1.0 spec allows multiple MidiPort metas per track; the first one
+    /// wins (matches the historical `Smf::parse`-based extraction which returned
+    /// the first occurrence). `None` when the track has no MidiPort meta
+    /// (callers should default to port 0).
+    pub midi_port: Option<u8>,
 }
 
 /// 直接从 MIDI 字节流按轨提取全部事件（音符 + 速度 + 拍号 + 调号 + 控制事件 +
@@ -1156,11 +1345,14 @@ where
     #[cfg(feature = "parallel")]
     {
         use rayon::prelude::*;
-        tracks.into_par_iter().enumerate().for_each(|(track_idx, events)| {
-            let events = parse_fast_track_all_events(events, track_idx as u16);
-            let mut h = handler.lock().unwrap_or_else(|e| e.into_inner());
-            h(track_idx, events);
-        });
+        tracks
+            .into_par_iter()
+            .enumerate()
+            .for_each(|(track_idx, events)| {
+                let events = parse_fast_track_all_events(events, track_idx as u16);
+                let mut h = handler.lock().unwrap_or_else(|e| e.into_inner());
+                h(track_idx, events);
+            });
     }
     #[cfg(not(feature = "parallel"))]
     {
@@ -1174,31 +1366,37 @@ where
     Ok(())
 }
 
-/// Parse all events (notes, tempo, signatures, controls, lyrics, markers, SysEx)
+/// Parse all events (notes, tempo, signatures, controls, lyrics, markers,
+/// text-class metas, SysEx)
 /// without allocating intermediate `TrackEvent` structs. Text/SysEx payloads are borrowed
 /// from the raw track slice to keep the 100 GB path allocation-free in the parser.
 #[cfg(feature = "alloc")]
-fn parse_fast_track_all_events(
-    mut events: FastTrackIter,
-    track_idx: u16,
-) -> TrackAllEvents<'_> {
+fn parse_fast_track_all_events(mut events: FastTrackIter, track_idx: u16) -> TrackAllEvents<'_> {
     let mut note_acc = NoteAccumulator::new(track_idx);
     let mut ctrl_acc = ControlEventAccumulator::new(track_idx);
     let mut time_signatures = Vec::new();
     let mut key_signatures = Vec::new();
     let mut lyrics = Vec::new();
     let mut markers = Vec::new();
+    let mut text_events = Vec::new();
     let mut sys_ex = Vec::new();
+    let mut midi_port: Option<u8> = None;
 
     while let Some((delta, event)) = events.next_event() {
         note_acc.advance(delta);
         ctrl_acc.advance(delta);
 
         match event {
-            MidiEvent::NoteOn { channel, key, velocity } => {
-                note_acc.note_on(key, velocity, channel)
-            }
-            MidiEvent::NoteOff { channel, key, .. } => note_acc.note_off(key, channel),
+            MidiEvent::NoteOn {
+                channel,
+                key,
+                velocity,
+            } => note_acc.note_on(key, velocity, channel),
+            MidiEvent::NoteOff {
+                channel,
+                key,
+                velocity,
+            } => note_acc.note_off(key, channel, velocity),
             MidiEvent::ControlChange {
                 channel,
                 controller,
@@ -1208,8 +1406,20 @@ fn parse_fast_track_all_events(
                 ctrl_acc.program_change(channel, program)
             }
             MidiEvent::PitchBend { channel, bend } => ctrl_acc.pitch_bend(channel, bend),
+            MidiEvent::PolyAftertouch {
+                channel,
+                key,
+                velocity,
+            } => ctrl_acc.poly_aftertouch(channel, key, velocity),
+            MidiEvent::ChannelAftertouch { channel, velocity } => {
+                ctrl_acc.channel_aftertouch(channel, velocity)
+            }
             MidiEvent::SysEx { data } => {
-                sys_ex.push(PackedSysExEvent::new(note_acc.current_tick, track_idx, data));
+                sys_ex.push(PackedSysExEvent::new(
+                    note_acc.current_tick,
+                    track_idx,
+                    data,
+                ));
             }
             MidiEvent::Meta { event_type, data } => match event_type {
                 0x51 if data.len() == 3 => {
@@ -1237,6 +1447,21 @@ fn parse_fast_track_all_events(
                 0x06 => {
                     markers.push(PackedTextEvent::new(note_acc.current_tick, track_idx, data));
                 }
+                // 文本类元事件：全量保留（此前静默丢弃）。0x03 TrackName 除外——
+                // 下游 scan_track_names 已处理，重复收集会造成双写歧义。
+                0x01 | 0x02 | 0x04 | 0x07 | 0x08 | 0x09 => {
+                    text_events.push(PackedTextMetaEvent::new(
+                        note_acc.current_tick,
+                        track_idx,
+                        event_type,
+                        data,
+                    ));
+                }
+                0x21 if data.len() >= 1 => {
+                    if midi_port.is_none() {
+                        midi_port = Some(data[0]);
+                    }
+                }
                 _ => {}
             },
             _ => {}
@@ -1254,7 +1479,9 @@ fn parse_fast_track_all_events(
         control_events,
         lyrics,
         markers,
+        text_events,
         sys_ex,
+        midi_port,
     }
 }
 
@@ -1270,8 +1497,16 @@ fn parse_fast_track_notes(
         acc.advance(delta);
 
         match event {
-            MidiEvent::NoteOn { channel, key, velocity } => acc.note_on(key, velocity, channel),
-            MidiEvent::NoteOff { channel, key, .. } => acc.note_off(key, channel),
+            MidiEvent::NoteOn {
+                channel,
+                key,
+                velocity,
+            } => acc.note_on(key, velocity, channel),
+            MidiEvent::NoteOff {
+                channel,
+                key,
+                velocity,
+            } => acc.note_off(key, channel, velocity),
             MidiEvent::Meta {
                 event_type: 0x51,
                 data,
@@ -1303,8 +1538,16 @@ fn parse_fast_track_notes_and_control_events(
         ctrl_acc.advance(delta);
 
         match event {
-            MidiEvent::NoteOn { channel, key, velocity } => note_acc.note_on(key, velocity, channel),
-            MidiEvent::NoteOff { channel, key, .. } => note_acc.note_off(key, channel),
+            MidiEvent::NoteOn {
+                channel,
+                key,
+                velocity,
+            } => note_acc.note_on(key, velocity, channel),
+            MidiEvent::NoteOff {
+                channel,
+                key,
+                velocity,
+            } => note_acc.note_off(key, channel, velocity),
             MidiEvent::ControlChange {
                 channel,
                 controller,
@@ -1314,6 +1557,14 @@ fn parse_fast_track_notes_and_control_events(
                 ctrl_acc.program_change(channel, program)
             }
             MidiEvent::PitchBend { channel, bend } => ctrl_acc.pitch_bend(channel, bend),
+            MidiEvent::PolyAftertouch {
+                channel,
+                key,
+                velocity,
+            } => ctrl_acc.poly_aftertouch(channel, key, velocity),
+            MidiEvent::ChannelAftertouch { channel, velocity } => {
+                ctrl_acc.channel_aftertouch(channel, velocity)
+            }
             MidiEvent::Meta {
                 event_type: 0x51,
                 data,
@@ -1354,8 +1605,16 @@ fn parse_fast_track_notes_control_and_time_signature_events(
         ctrl_acc.advance(delta);
 
         match event {
-            MidiEvent::NoteOn { channel, key, velocity } => note_acc.note_on(key, velocity, channel),
-            MidiEvent::NoteOff { channel, key, .. } => note_acc.note_off(key, channel),
+            MidiEvent::NoteOn {
+                channel,
+                key,
+                velocity,
+            } => note_acc.note_on(key, velocity, channel),
+            MidiEvent::NoteOff {
+                channel,
+                key,
+                velocity,
+            } => note_acc.note_off(key, channel, velocity),
             MidiEvent::ControlChange {
                 channel,
                 controller,
@@ -1365,6 +1624,14 @@ fn parse_fast_track_notes_control_and_time_signature_events(
                 ctrl_acc.program_change(channel, program)
             }
             MidiEvent::PitchBend { channel, bend } => ctrl_acc.pitch_bend(channel, bend),
+            MidiEvent::PolyAftertouch {
+                channel,
+                key,
+                velocity,
+            } => ctrl_acc.poly_aftertouch(channel, key, velocity),
+            MidiEvent::ChannelAftertouch { channel, velocity } => {
+                ctrl_acc.channel_aftertouch(channel, velocity)
+            }
             MidiEvent::Meta {
                 event_type: 0x51,
                 data,
@@ -1741,7 +2008,11 @@ impl StreamingNoteLoader {
 
     fn process_event(&mut self, tick: u32, track_idx: usize, event: MidiEvent<'_>) {
         match event {
-            MidiEvent::NoteOn { channel, key, velocity } => {
+            MidiEvent::NoteOn {
+                channel,
+                key,
+                velocity,
+            } => {
                 let ch = (channel.min(15)) as usize;
                 let key_idx = key as usize;
                 if key_idx < 256 && track_idx < self.active_notes.len() {
@@ -1756,7 +2027,11 @@ impl StreamingNoteLoader {
                     }
                 }
             }
-            MidiEvent::NoteOff { channel, key, .. } => {
+            MidiEvent::NoteOff {
+                channel,
+                key,
+                velocity: _,
+            } => {
                 let ch = (channel.min(15)) as usize;
                 let key_idx = key as usize;
                 if key_idx < 256 && track_idx < self.active_notes.len() {
@@ -1769,7 +2044,15 @@ impl StreamingNoteLoader {
         }
     }
 
-    fn finish_note(&mut self, track_idx: usize, ch: usize, key: usize, active: ActiveNote, end_tick: u32, channel: u8) {
+    fn finish_note(
+        &mut self,
+        track_idx: usize,
+        ch: usize,
+        key: usize,
+        active: ActiveNote,
+        end_tick: u32,
+        channel: u8,
+    ) {
         self.finished_notes.push_back(PackedNote::new(
             active.start_tick,
             end_tick,
@@ -2113,8 +2396,8 @@ mod tests {
 
     #[test]
     fn test_packed_note_size() {
-        // Verify the packed size is 13 bytes (was 12 before adding channel)
-        assert_eq!(core::mem::size_of::<PackedNote>(), 13);
+        // Packed size is 14 bytes (13 + 1 release_velocity; was 12 before adding channel)
+        assert_eq!(core::mem::size_of::<PackedNote>(), 14);
     }
 
     #[test]
@@ -2125,14 +2408,37 @@ mod tests {
         let end_tick = note.end_tick;
         let key = note.key;
         let velocity = note.velocity;
+        let release_velocity = note.release_velocity;
         let channel = note.channel;
         let track = note.track;
         assert_eq!(start_tick, 100);
         assert_eq!(end_tick, 200);
         assert_eq!(key, 60);
         assert_eq!(velocity, 100);
+        // new() 保持兼容：释放力度默认 0
+        assert_eq!(release_velocity, 0);
         assert_eq!(channel, 5);
         assert_eq!(track, 0);
+    }
+
+    #[test]
+    fn test_packed_note_release_velocity() {
+        let note = PackedNote::new_with_release(100, 200, 60, 100, 64, 5, 0);
+        let velocity = note.velocity;
+        let release_velocity = note.release_velocity;
+        assert_eq!(velocity, 100);
+        assert_eq!(release_velocity, 64);
+
+        // vel 掩码：>127 的输入截断到 7 位
+        let masked = PackedNote::new_with_release(0, 10, 60, 200, 200, 0, 0);
+        assert_eq!(masked.velocity, 200 & 0x7F);
+        assert_eq!(masked.release_velocity, 200 & 0x7F);
+
+        // builder 形式
+        let built = PackedNote::new(0, 10, 60, 90, 0, 0).with_release_velocity(77);
+        assert_eq!(built.release_velocity, 77);
+        // 原 velocity 不受影响
+        assert_eq!(built.velocity, 90);
     }
 
     #[test]
@@ -2344,6 +2650,100 @@ mod tests {
 
     #[test]
     #[cfg(feature = "alloc")]
+    fn test_note_off_release_velocity_roundtrip() {
+        // NoteOff(0x80) 携带非零释放力度 64：Smf 路径与 fast-bytes 路径都必须透传。
+        let track = vec![
+            TrackEvent {
+                delta: u28::new(0),
+                kind: TrackEventKind::Midi {
+                    channel: u4::new(0),
+                    message: MidiMessage::NoteOn {
+                        key: 60u8,
+                        vel: u7::new(100),
+                    },
+                },
+            },
+            TrackEvent {
+                delta: u28::new(480),
+                kind: TrackEventKind::Midi {
+                    channel: u4::new(0),
+                    message: MidiMessage::NoteOff {
+                        key: 60u8,
+                        vel: u7::new(64),
+                    },
+                },
+            },
+            TrackEvent {
+                delta: u28::new(0),
+                kind: TrackEventKind::Meta(MetaMessage::EndOfTrack),
+            },
+        ];
+        let smf = crate::Smf {
+            header: crate::smf::Header {
+                format: Format::Parallel,
+                timing: Timing::Metrical(u15::new(480)),
+            },
+            tracks: vec![track],
+        };
+
+        // Smf 路径
+        let (notes, _) = extract_notes(&smf);
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].velocity, 100);
+        assert_eq!(notes[0].release_velocity, 64);
+
+        // fast-bytes 路径（0x80 NoteOff）
+        let mut bytes = Vec::new();
+        smf.write(&mut bytes).expect("write failed");
+        let mut fast_releases = Vec::new();
+        extract_all_events_per_track_streaming_from_bytes(&bytes, |_idx, events| {
+            fast_releases.extend(events.notes.iter().map(|n| n.release_velocity));
+        })
+        .expect("extract all events failed");
+        assert_eq!(fast_releases, vec![64]);
+
+        // NoteOn(vel=0) 等价 NoteOff：释放力度为 0，不断言失败只断言透传语义。
+        let track_zero = vec![
+            TrackEvent {
+                delta: u28::new(0),
+                kind: TrackEventKind::Midi {
+                    channel: u4::new(1),
+                    message: MidiMessage::NoteOn {
+                        key: 62u8,
+                        vel: u7::new(90),
+                    },
+                },
+            },
+            TrackEvent {
+                delta: u28::new(240),
+                kind: TrackEventKind::Midi {
+                    channel: u4::new(1),
+                    message: MidiMessage::NoteOn {
+                        key: 62u8,
+                        vel: u7::new(0),
+                    },
+                },
+            },
+            TrackEvent {
+                delta: u28::new(0),
+                kind: TrackEventKind::Meta(MetaMessage::EndOfTrack),
+            },
+        ];
+        let smf_zero = crate::Smf {
+            header: crate::smf::Header {
+                format: Format::Parallel,
+                timing: Timing::Metrical(u15::new(480)),
+            },
+            tracks: vec![track_zero],
+        };
+        let (notes_zero, _) = extract_notes(&smf_zero);
+        assert_eq!(notes_zero.len(), 1);
+        assert_eq!(notes_zero[0].velocity, 90);
+        assert_eq!(notes_zero[0].release_velocity, 0);
+    }
+
+    #[test]
+    #[cfg(feature = "alloc")]
     fn test_extract_all_events_per_track_streaming() {
         let track = vec![
             TrackEvent {
@@ -2382,6 +2782,22 @@ mod tests {
             },
             TrackEvent {
                 delta: u28::new(0),
+                kind: TrackEventKind::Meta(MetaMessage::Text(b"hello")),
+            },
+            TrackEvent {
+                delta: u28::new(0),
+                kind: TrackEventKind::Meta(MetaMessage::Copyright(b"(c) test")),
+            },
+            TrackEvent {
+                delta: u28::new(0),
+                kind: TrackEventKind::Meta(MetaMessage::InstrumentName(b"Piano")),
+            },
+            TrackEvent {
+                delta: u28::new(0),
+                kind: TrackEventKind::Meta(MetaMessage::CuePoint(b"cue1")),
+            },
+            TrackEvent {
+                delta: u28::new(0),
                 kind: TrackEventKind::Midi {
                     channel: u4::new(0),
                     message: MidiMessage::NoteOff {
@@ -2413,18 +2829,48 @@ mod tests {
         let mut key_sigs = Vec::new();
         let mut lyrics = Vec::new();
         let mut markers = Vec::new();
+        let mut text_events = Vec::new();
         let mut sys_exes = Vec::new();
-        extract_all_events_per_track_streaming_from_bytes(&bytes,
-            |_track_idx, events| {
-                note_keys.extend(events.notes.iter().map(|n| n.key));
-                tempos.extend(events.tempo_changes.iter().copied());
-                time_sigs.extend(events.time_signatures.iter().map(|e| (e.tick, e.numerator, e.denominator)));
-                key_sigs.extend(events.key_signatures.iter().map(|e| (e.tick, e.sharps, e.is_minor)));
-                lyrics.extend(events.lyrics.iter().map(|e| (e.tick, e.track, e.text.to_vec())));
-                markers.extend(events.markers.iter().map(|e| (e.tick, e.track, e.text.to_vec())));
-                sys_exes.extend(events.sys_ex.iter().map(|e| (e.tick, e.track, e.data.to_vec())));
-            },
-        )
+        extract_all_events_per_track_streaming_from_bytes(&bytes, |_track_idx, events| {
+            note_keys.extend(events.notes.iter().map(|n| n.key));
+            tempos.extend(events.tempo_changes.iter().copied());
+            time_sigs.extend(
+                events
+                    .time_signatures
+                    .iter()
+                    .map(|e| (e.tick, e.numerator, e.denominator)),
+            );
+            key_sigs.extend(
+                events
+                    .key_signatures
+                    .iter()
+                    .map(|e| (e.tick, e.sharps, e.is_minor)),
+            );
+            lyrics.extend(
+                events
+                    .lyrics
+                    .iter()
+                    .map(|e| (e.tick, e.track, e.text.to_vec())),
+            );
+            markers.extend(
+                events
+                    .markers
+                    .iter()
+                    .map(|e| (e.tick, e.track, e.text.to_vec())),
+            );
+            text_events.extend(
+                events
+                    .text_events
+                    .iter()
+                    .map(|e| (e.tick, e.track, e.meta_type, e.text.to_vec())),
+            );
+            sys_exes.extend(
+                events
+                    .sys_ex
+                    .iter()
+                    .map(|e| (e.tick, e.track, e.data.to_vec())),
+            );
+        })
         .expect("extract all events failed");
 
         assert_eq!(note_keys, vec![60]);
@@ -2434,6 +2880,73 @@ mod tests {
         assert_eq!(key_sigs, vec![(0, 2, false)]);
         assert_eq!(lyrics, vec![(480, 0, b"la".to_vec())]);
         assert_eq!(markers, vec![(480, 0, b"Chorus".to_vec())]);
+        // 文本类元事件全量保留：(tick, track, meta_type, bytes)
+        assert_eq!(
+            text_events,
+            vec![
+                (480, 0, 0x01, b"hello".to_vec()),
+                (480, 0, 0x02, b"(c) test".to_vec()),
+                (480, 0, 0x04, b"Piano".to_vec()),
+                (480, 0, 0x07, b"cue1".to_vec()),
+            ]
+        );
         assert_eq!(sys_exes, vec![(480, 0, b"\x01\x02\x03\xF7".to_vec())]);
+    }
+
+    #[test]
+    fn test_packed_control_event_size() {
+        // 4 + 2 + 1 + 1 + 2 = 10 字节；新增 kind 3/4 不改变布局
+        assert_eq!(core::mem::size_of::<PackedControlEvent>(), 10);
+    }
+
+    #[test]
+    fn test_packed_control_aftertouch_roundtrip() {
+        let ch_at = PackedControlEvent::channel_aftertouch(10, 2, 5, 64);
+        assert_eq!(ch_at.kind, 3);
+        assert_eq!(ch_at.as_channel_aftertouch(), 64);
+
+        let poly = PackedControlEvent::poly_aftertouch(20, 1, 3, 60, 80);
+        assert_eq!(poly.kind, 4);
+        assert_eq!(poly.as_poly_aftertouch(), (60, 80));
+
+        // 旧 kinds 不受影响
+        let cc = PackedControlEvent::control_change(0, 0, 0, 7, 100);
+        assert_eq!(cc.kind, 0);
+        assert_eq!(cc.as_control_change(), (7, 100));
+    }
+
+    #[test]
+    #[cfg(feature = "alloc")]
+    fn test_fast_aftertouch_parse_and_no_desync() {
+        // MThd(format 0, 1 track, division 128) + MTrk(19 bytes):
+        // ChAT(0xD0,1字节数据) → PolyAT(0xA0) → NoteOn → NoteOff → EOT。
+        // 回归：0xD0 此前误跳 2 字节导致后续事件错位。
+        let bytes: Vec<u8> = vec![
+            0x4D, 0x54, 0x68, 0x64, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x01, 0x00, 0x80,
+            0x4D, 0x54, 0x72, 0x6B, 0x00, 0x00, 0x00, 0x13, 0x00, 0xD0, 0x40, 0x00, 0xA0, 0x3C,
+            0x50, 0x00, 0x90, 0x3C, 0x64, 0x60, 0x80, 0x3C, 0x40, 0x00, 0xFF, 0x2F, 0x00,
+        ];
+        let (notes, _, controls) =
+            extract_notes_and_control_events_from_bytes(&bytes).expect("parse failed");
+
+        let kinds: Vec<(u8, u32)> = controls.iter().map(|e| (e.kind, e.tick)).collect();
+        assert_eq!(kinds, vec![(3, 0), (4, 0)]);
+
+        let ch_at = controls.iter().find(|e| e.kind == 3).expect("无通道触后");
+        assert_eq!(ch_at.as_channel_aftertouch(), 64);
+        let poly = controls.iter().find(|e| e.kind == 4).expect("无复音触后");
+        assert_eq!(poly.as_poly_aftertouch(), (60, 80));
+
+        // 0xD0 之后 NoteOn 必须在正确 tick/键/力度解析（错位即失败）
+        assert_eq!(notes.len(), 1);
+        // packed struct：先拷贝到局部变量再断言，避免非对齐引用
+        let start_tick = notes[0].start_tick;
+        let end_tick = notes[0].end_tick;
+        let key = notes[0].key;
+        let velocity = notes[0].velocity;
+        assert_eq!(start_tick, 0);
+        assert_eq!(end_tick, 96);
+        assert_eq!(key, 60);
+        assert_eq!(velocity, 100);
     }
 }
