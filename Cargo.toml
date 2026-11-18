@@ -14,6 +14,12 @@ include = [
   "/Cargo.toml",
 ]
 
+# 修复 5ea50b5 改名遗留 bug：包名改为 lumino-midly 后，doctest 仍 `use midly::...`，
+# 默认 lib 名 lumino_midly 导致全部 doctest 编译失败。显式 lib 名恢复 doctest 可运行；
+# 下游（lumino-rs）以 `midly = { package = "lumino-midly" }` 别名依赖，不受影响。
+[lib]
+name = "midly"
+
 [features]
 default = ["alloc", "std", "parallel"]
 
