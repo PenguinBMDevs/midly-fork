@@ -358,11 +358,11 @@ fn main() -> ExitCode {
             Ok(doc) => {
                 let line = digest_document(&doc).to_line();
                 println!("{line}");
-                if let Some(out) = args.get(2) {
-                    if let Err(e) = fs::write(out, format!("{line}\n")) {
-                        eprintln!("写入摘要失败 {out}: {e}");
-                        return ExitCode::FAILURE;
-                    }
+                if let Some(out) = args.get(2)
+                    && let Err(e) = fs::write(out, format!("{line}\n"))
+                {
+                    eprintln!("写入摘要失败 {out}: {e}");
+                    return ExitCode::FAILURE;
                 }
                 ExitCode::SUCCESS
             }
