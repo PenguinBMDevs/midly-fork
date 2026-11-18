@@ -76,6 +76,23 @@ function Resolve-Material([string]$name) {
     }
 }
 
+# 基线源码复制到缓存目录并把 version 改成 0.6.99：
+# crates.io 上存在 0.6.5，patch 到 0.6.3/0.6.4 时解析器会选更高的 registry 版本，
+# 导致 patch 被忽略（cargo 提示 "patch ... was not used"）。抬高版本号即可确定性命中。
+function Prepare-Baseline([string]$ver) {
+    $src = Join-Path $Baselines "lumino-midly-$ver"
+    $dst = Join-Path $BinDir "base-$ver"
+    if (-not (Test-Path $src)) { throw "基线不存在: $src" }
+    if (-not (Test-Path $dst)) {
+        Copy-Item $src $dst -Recurse -Force
+        $toml = Join-Path $dst 'Cargo.toml'
+        $text = [IO.File]::ReadAllText($toml)
+        $text = ([regex]'(?m)^version\s*=\s*"0\.6\.\d+"').Replace($text, 'version = "0.6.99"', 1)
+        [IO.File]::WriteAllText($toml, $text, (New-Object System.Text.UTF8Encoding($false)))
+    }
+    $dst
+}
+
 function Get-Features([string]$ver, [string]$mode) {
     $f = @()
     if ($mode -eq 'parallel') { $f += 'parallel' }
@@ -133,6 +150,10 @@ if (Test-Path $LockPath) { Copy-Item $LockPath $LockBackup -Force }
 $Labels = @()
 foreach ($ver in $Versions) {
     foreach ($mode in $Modes) {
+        if ($mode -eq 'serial' -and $ver -ne 'fork') {
+            Write-Warning "跳过 $ver-serial：基线 0.6.3–0.6.5 的 serial 构建存在 E0382（fork 已修）"
+            continue
+        }
         $label = "$ver-$mode"
         $Labels += $label
         $exe = Join-Path $BinDir "$label.exe"
@@ -142,10 +163,10 @@ foreach ($ver in $Versions) {
         }
         $feat = Get-Features $ver $mode
         $buildArgs = @('build', '--release', '--bin', 'midly-perf', '--manifest-path',
-            (Join-Path $Perf 'Cargo.toml'), '--no-default-features', '--features', $feat)
+            (Join-Path $Perf 'Cargo.toml'), '--no-default-features')
+        if ($feat) { $buildArgs += @('--features', $feat) }
         if ($ver -ne 'fork') {
-            $baseline = "$($Baselines -replace '\\', '/')/lumino-midly-$ver"
-            if (-not (Test-Path $baseline)) { throw "基线不存在: $baseline" }
+            $baseline = (Prepare-Baseline $ver) -replace '\\', '/'
             $buildArgs += @('--config', "patch.crates-io.lumino-midly.path='$baseline'")
         }
         Write-Host "[matrix] 构建 $label（features=$feat）..."
@@ -162,6 +183,10 @@ if (Test-Path $LockBackup) {
 }
 
 # ── 运行矩阵 ───────────────────────────────────────────────────────────────
+if ($Labels.Count -eq 0) {
+    Write-Warning '没有可运行的组合（全部被跳过）'
+    exit 0
+}
 $Errors = @()
 $Total = $Labels.Count * $MaterialPaths.Count * $Threads.Count
 $Done = 0

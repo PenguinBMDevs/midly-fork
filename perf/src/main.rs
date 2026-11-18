@@ -14,6 +14,7 @@
 
 mod bench;
 mod materials;
+#[cfg(feature = "sort-proto")]
 mod sort_proto;
 mod sys;
 
@@ -31,6 +32,7 @@ fn main() -> ExitCode {
     }
     let mode = args[0].as_str();
     // sort-proto 的合成模式不需要文件（规模曲线用）。
+    #[cfg(feature = "sort-proto")]
     if mode == "sort-proto" && args.get(1).map(String::as_str) == Some("--synthetic") {
         return run_sort_proto(&[], &args[1..]);
     }
@@ -51,7 +53,15 @@ fn main() -> ExitCode {
     match mode {
         "characterize" => characterize(path, &bytes, file_mb),
         "to-format0" => to_format0(&bytes, &args[2..]),
+        #[cfg(feature = "sort-proto")]
         "sort-proto" => run_sort_proto(&bytes, &args[2..]),
+        #[cfg(not(feature = "sort-proto"))]
+        "sort-proto" => {
+            eprintln!(
+                "该构建未启用 sort-proto（基线对比时关闭，依赖 fork 的 PackedNote.release_velocity）"
+            );
+            ExitCode::FAILURE
+        }
         "bench" => run_bench_cli(path, &bytes, file_mb, &args[2..]),
         _ => {
             eprintln!("未知模式: {mode}");
@@ -385,6 +395,7 @@ fn run_bench_cli(path: &str, bytes: &[u8], file_mb: f64, opts: &[String]) -> Exi
 }
 
 /// sort-proto：巨轨音符排序候选实现对比（稳定/不稳定/基数 + 已排序快速路径）。
+#[cfg(feature = "sort-proto")]
 fn run_sort_proto(bytes: &[u8], opts: &[String]) -> ExitCode {
     let mut runs = 5usize;
     let mut synthetic: Option<usize> = None;
