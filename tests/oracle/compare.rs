@@ -180,6 +180,13 @@ pub fn assert_track_eq(expected: &RefTrack, actual: &TrackAllEvents, name: &str,
         "{ctx}: midi_port 不一致"
     );
 
+    // ── TrackName：首个出现值（原始字节） ──
+    match (&expected.track_name, actual.track_name) {
+        (None, None) => {}
+        (Some(e), Some(a)) => assert_eq!(e.as_slice(), a, "{ctx}: track_name 内容不一致"),
+        (e, a) => panic!("{ctx}: track_name 存在性不一致 expected={e:?} actual={a:?}"),
+    }
+
     // ── EOT 结构元数据（指导书 §2.5）：三个时间 + 畸形尾部诊断 ──
     assert_eq!(
         expected.timing, actual.timing,

@@ -1353,6 +1353,13 @@ pub struct TrackAllEvents<'a> {
     /// the first occurrence). `None` when the track has no MidiPort meta
     /// (callers should default to port 0).
     pub midi_port: Option<u8>,
+    /// TrackName meta event (FF 03) of this track — the **first** occurrence, if any.
+    ///
+    /// 原始字节（未解码）：调用方自行按需解码（UTF-8/Shift-JIS/GBK…）。
+    /// 这里直接带出可以免掉下游的第二次全量扫描——对没有 TrackName 的轨，
+    /// 「扫描找名字」必须走完整条轨（1.25GB 素材实测占端到端墙钟 ~57%）。
+    /// 空名称仍返回 `Some(&[])`，是否存在与是否为空由调用方区分。
+    pub track_name: Option<&'a [u8]>,
     /// 轨道时间边界（EOT / 内容末尾 / 物理末尾），见 [`TrackTiming`]。
     ///
     /// EOT 本身不进入上述音频事件流：它只声明轨道结束位置。兼容模式下
@@ -1603,6 +1610,7 @@ fn parse_fast_track_all_events(mut events: FastTrackIter, track_idx: u16) -> Tra
     let mut text_events = Vec::new();
     let mut sys_ex = Vec::new();
     let mut midi_port: Option<u8> = None;
+    let mut track_name: Option<&[u8]> = None;
     // EOT 结构元数据（指导书 §2）：EOT 不进入事件流，只记录时间边界。
     // 全部记录都发生在 EOT 分支（每轨最多几次），热循环零额外开销。
     let mut eot_tick: Option<u32> = None;
@@ -1681,11 +1689,16 @@ fn parse_fast_track_all_events(mut events: FastTrackIter, track_idx: u16) -> Tra
                     0x06 => {
                         markers.push(PackedTextEvent::new(tick, track_idx, data));
                     }
-                    // 文本类元事件：全量保留（此前静默丢弃）。0x03 TrackName 除外——
-                    // 下游 scan_track_names 已处理，重复收集会造成双写歧义。
+                    // 文本类元事件：全量保留（此前静默丢弃）。
                     0x01 | 0x02 | 0x04 | 0x07 | 0x08 | 0x09 => {
                         text_events
                             .push(PackedTextMetaEvent::new(tick, track_idx, event_type, data));
+                    }
+                    // TrackName：单独带出（首个生效），供下游免去第二次全量扫描。
+                    0x03 => {
+                        if track_name.is_none() {
+                            track_name = Some(data);
+                        }
                     }
                     0x21 if data.len() >= 1 => {
                         if midi_port.is_none() {
@@ -1729,6 +1742,7 @@ fn parse_fast_track_all_events(mut events: FastTrackIter, track_idx: u16) -> Tra
         text_events,
         sys_ex,
         midi_port,
+        track_name,
         timing: TrackTiming {
             eot_tick,
             physical_end_tick,

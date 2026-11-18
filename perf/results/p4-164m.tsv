@@ -1,0 +1,6 @@
+label	file	mode	callback	threads	warmup	runs	wall_median_ms	wall_min_ms	wall_max_ms	peak_ws_mb	notes	controls	tracks	total_ticks	file_mb	note
+lumino-before	F:\Soundfont Collection v1\熠星始芒：StarT 164 Million v1.1fix.mid	app	streaming-lock	8	1	2	4358.44	3900.73	4816.15	3403.9	164206462	218987	826	3093120	1253.808	旧 API + 全局 Mutex
+lumino-after	F:\Soundfont Collection v1\熠星始芒：StarT 164 Million v1.1fix.mid	app	collect	8	1	2	2260.73	2217.91	2303.55	3460.7	164206462	218987	826	3093120	1253.808	Tier2 collect
+lumino-after-noscan	F:\Soundfont Collection v1\熠星始芒：StarT 164 Million v1.1fix.mid	app	collect	8	1	2	978.02	957.99	998.05	3443.5	164206462	218987	826	3093120	1253.808	实验：跳过 scan_track_names
+midly-minimal	F:\Soundfont Collection v1\熠星始芒：StarT 164 Million v1.1fix.mid	fork	parse-only	8	1	2	503.56	487.92	519.20	1655.6	164206462	218987	826	3093120	1253.808	纯解析+派发
+midly-realistic-par	F:\Soundfont Collection v1\熠星始芒：StarT 164 Million v1.1fix.mid	fork	per-track-work	8	1	2	1355.37	1150.84	1559.90	5855.4	164206462	218987	826	3093120	1253.808	sink 含 notes clone（峰值偏高）

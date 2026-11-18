@@ -49,6 +49,8 @@ pub struct RefTrack {
     pub texts: Vec<(u32, u8, Vec<u8>)>,
     pub sysex: Vec<(u32, Vec<u8>)>,
     pub midi_port: Option<u8>,
+    /// TrackName meta（首个出现值，原始字节）。
+    pub track_name: Option<Vec<u8>>,
     /// EOT 结构元数据（指导书 §2.5），由参考链独立计算。
     pub timing: TrackTiming,
 }
@@ -171,6 +173,11 @@ pub fn accumulate_track(track: &[TrackEvent], _idx: usize) -> RefTrack {
                 MetaMessage::MidiPort(port) => {
                     if out.midi_port.is_none() {
                         out.midi_port = Some(port.as_int());
+                    }
+                }
+                MetaMessage::TrackName(name) => {
+                    if out.track_name.is_none() {
+                        out.track_name = Some(name.to_vec());
                     }
                 }
                 // Smf 对长度不足的 meta 分类为 Unknown（如 0x58 要求 len>=4）；
