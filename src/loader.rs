@@ -1237,6 +1237,10 @@ where
     let (_header, tracks_count, _division, raw) = fast_midi::parse_header(&data)?;
     let tracks = fast_midi::iter_tracks_from_data(raw, tracks_count);
 
+    // Mutex 包装仅在 parallel 路径需要；serial 路径直接持有 track_handler。
+    // 无条件包装会在 serial 构建下先把 track_handler move 进 Mutex，
+    // 导致下方 `let mut handler = track_handler` E0382（0.6.5 基线 bug）。
+    #[cfg(feature = "parallel")]
     let handler = std::sync::Mutex::new(track_handler);
 
     #[cfg(feature = "parallel")]
@@ -1340,6 +1344,10 @@ where
     let (_header, tracks_count, _division, raw) = fast_midi::parse_header(&data)?;
     let tracks = fast_midi::iter_tracks_from_data(raw, tracks_count);
 
+    // Mutex 包装仅在 parallel 路径需要；serial 路径直接持有 track_handler。
+    // 无条件包装会在 serial 构建下先把 track_handler move 进 Mutex，
+    // 导致下方 `let mut handler = track_handler` E0382（0.6.5 基线 bug）。
+    #[cfg(feature = "parallel")]
     let handler = std::sync::Mutex::new(track_handler);
 
     #[cfg(feature = "parallel")]
