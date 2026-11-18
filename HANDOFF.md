@@ -20,6 +20,8 @@
 | `F:\midly-fork` | 工作仓库。工作分支 `baseline/0.6.5` |
 | `F:\midly-fork\perf` | P2/P3 测量台 crate（characterize/bench/gen + Tier2 `lumino-bench`），结果在 `perf/results/*.tsv` |
 | `F:\midly-fork\perf\src\bin\lumino_bench.rs` | **Tier2 真实链路测量台**（`--features lumino`，path 依赖 ../lumino-rs/crates/audio/midi-model）。`perf` 因此要求同机存在 lumino-rs 检出 |
+| `F:\midly-fork\perf\tier2\` | **Tier2 参考实现**（`document_build.rs.tier2` + README：接入步骤/A-B/后续优化）。lumino 侧排期改为待办，实现不丢 |
+| `F:\Soundfont Collection v1\熠星始芒：StarT 164 Million v1.1fix.mid` | 用户提供的**生产级压测素材**：1.25GB / 826 轨 / 164,206,462 音符（仓库外，勿拷贝入库） |
 | `F:\midly-fork\tests\oracle*` | P1 正确性 Oracle（入口 oracle.rs + oracle/{reference,compare,synthetic}.rs） |
 | `F:\midly-fork\tests\eot.rs` | EOT 规格测试（指导书 §2.9 十项） |
 | `F:\midly-fork\test-asset` | 12 个 fixture + 2 个 210k 黑乐谱 |
@@ -71,6 +73,16 @@
 - 语义对拍：5 个素材接入前后摘要逐字段一致；**0.6.5 vs fork 也逐字段一致**（证明 P3/EOT 不改产物）。
 - 副作用（正面）：归并按轨序 → 修掉旧实现的**跨轨同 tick 顺序不确定性**（旧行为依赖轨到达顺序）。
 
+**164M 生产级门禁** ✅（用户素材，1.25GB / 826 轨 / 164,206,462 音符）
+- 峰值门禁通过：Tier2 前后 3404 → 3461MB（**+1.7%**），墙钟 **4358 → 2261ms（-48%）**；
+  语义摘要逐字段一致（`perf/results/tier2-digests/164m-*.txt`）。
+- 分阶段归因（t8）：midly 纯解析 **504ms**；midly realistic-par 1355ms；app 2261ms。
+- **新发现**：`scan_track_names` 的第二次全量扫描占 **1.28s**（跳过 → 978ms，-57%）。
+  根因：无 TrackName 的轨必须走完整条轨才能确认没有名字。
+- fork 新增 `TrackAllEvents.track_name`（首个 FF 03 原始字节，meta 分支内带出，零热循环成本）；
+  下游接入随 Tier2 一起待办（见 `perf/tier2/README.md`）。
+- 原始数据：`perf/results/p4-164m.tsv`。
+
 **commit 表（baseline/0.6.5，master 未动，均未签名未推送）**
 
 | SHA | 内容 |
@@ -89,19 +101,20 @@
 | d897a94 | test(perf): EOT 零开销 A/B 数据 |
 | 73a3998 | docs: HANDOFF 更新 |
 | 2abb6cb | feat(perf): Tier2 测量台 + 接入前后 A/B 数据 |
+| 9e14e95 | docs: HANDOFF 记录 Tier2 |
+| 84d9a78 | feat(loader): track_name + 164M 门禁数据 + Tier2 参考实现 |
 
 **测试状态**：fork parallel = 77 单元 + 10 EOT + 6 Oracle + 13 doctest(1 ignored) 绿；serial（`--no-default-features --features std,alloc,memmap,strict`）= 77 + 10 + 6 + 12 绿。新代码 clippy 零新增、rustfmt 干净。
 
 ## 3. 当前仓库状态（重要）
 
-- **fork**：`baseline/0.6.5` = 2abb6cb，工作树干净。13 个提交**未签名、未推送**。
-- **lumino-rs（dev）：3 个文件本地已改，全部未提交**（用户已授权做 Tier2 接入）：
-  - `Cargo.toml`：`[patch.crates-io] lumino-midly = { path = "../midly-fork" }`（**CI/他机无此路径，推送前必须移除**）
-  - `Cargo.lock`：path 源（随 patch 一起还原）
-  - `crates/audio/midi-model/src/document_build.rs`：Tier2 接入（collect API）
-  - 验收：`cargo test -p lumino-midi-model -p lumino-midi-loader` = 56+1+124 绿（5 ignored 为性能门控）。
-  - **还原命令**：`git checkout -- Cargo.toml Cargo.lock crates/audio/midi-model/src/document_build.rs`
-  - 其他 ~62 个他人未提交改动**不要动**。
+- **fork**：`baseline/0.6.5` = 84d9a78，工作树干净。15 个提交**未签名、未推送**
+  （用户正在补 GPG；补好后统一签名/推送）。
+- **lumino-rs（dev）：工作区已被用户重置并提交自身工作，与 fork 无关联**。
+  - 用户决策：**Tier2 合并等 midly 全部改动完成后再做**（依赖改造视为待办）。
+  - 参考实现与接入步骤、A/B 数据：`perf/tier2/`（`README.md` + `document_build.rs.tier2`）。
+  - **不要在 lumino-rs 留任何未提交改动**（用户会重置）；需要实测时按 `perf/tier2/README.md` 临时接入，
+    测完 `git checkout --` 还原。
 - 依赖 midly 的主仓 crate（6 个）：midi-model、midi-loader、midi-io、export、project、ui。
 
 ## 4. 关键数据（原始数据在 perf/results/）
@@ -123,6 +136,7 @@
 | **真实链路 Pi.mid（Tier2 前→后）** | **19.27 → 13.50ms（min 18.53→11.37）** | median -30% / min -39%；peak 79.9→85.4MB（+7%） |
 | 真实链路 StarT210k（控制密集） | 5.11 → 5.48ms | **+7%**：归并串行暴露（结构性），P4 k-way merge 可收回 |
 | 真实链路 Clementi | 0.041 → 0.042ms | 持平 |
+| **164M（1.25GB/826轨）真实链路 前→后** | **4358 → 2261ms（-48%）** | peak 3404→3461MB（+1.7%）；跳过 `scan_track_names` 再降至 978ms |
 
 - 计量限制：`GetProcessTimes` 按 15.625ms tick 量化（CPU 仅粗口径）；机器波动 ±2ms（同配置复测）；结论一律用 min/median 区间 + 同批交替 A/B。
 - 冷/热页缓存：当前 harness 用 `fs::read` 整份入内存，解析测量与页缓存无关（冷热只影响未计时的读盘）；mmap 冷缺页属 Tier2 口径，未测 —— 已记录为限制，不要假装测过。
@@ -177,7 +191,7 @@ cd F:\lumino-rs; cargo test -p lumino-midi-model -p lumino-midi-loader
 - 未闭合音符：`finish()` 在**最后事件 tick** 收尾，release=0，按 **channel×key 升序**追加。
 - 音符产出顺序 = NoteOff 到达序（非 start_tick 排序）；控制事件 = 文件序。
 - **EOT**：首个 `FF 2F`（任意长度）→ `eot_tick`；EOT 不进入事件流；EOT 后事件保留并置 `has_events_after_eot`；`content_end_tick` = 最后非 EOT 事件 tick；重复 EOT 计入 `has_events_after_eot`。
-- F0 SysEx 与 F7 Escape 均并入 sys_ex；MidiPort(0x21) 首个生效；TrackName(0x03) 不收录；文本 meta 宽松长度（0x58 len≥2 / 0x51 len==3 / 0x59 len≥2；Smf 参考链对 0x58 要求 len≥4）。
+- F0 SysEx 与 F7 Escape 均并入 sys_ex；MidiPort(0x21) 首个生效；**TrackName(0x03) 由快路径带出首个值（`track_name`，原始字节）——下游不得再做第二次全量扫描**；文本 meta 宽松长度（0x58 len≥2 / 0x51 len==3 / 0x59 len≥2；Smf 参考链对 0x58 要求 len≥4）。
 - Tempo us=0 跳过；bpm=60e6/us（f32）。
 - **PB 契约 = 原始 14-bit（0..16383）**；`PitchBend::as_int()` 是偏差语义，取原值用 `bend.0.as_int()`。
 - NoteOn/NoteOff 的 key 是 **u8**（256 键黑乐谱）；Aftertouch 的 key 是 u7。
@@ -189,23 +203,18 @@ cd F:\lumino-rs; cargo test -p lumino-midi-model -p lumino-midi-loader
 
 ## 8. 下一步（优先级序）
 
-1. **P4 解析热循环**（fork 侧唯一主板手；P3 后 minimal t8 ≈ 8.5–10ms 即天花板）：
+0. **GPG 补签 + 推 fork**（用户正在补）：15 个提交未签名未推送；补好后统一签名/推送。
+1. **P4 解析热循环**（fork 侧主板手，现在就能做；P3 后 minimal t8 ≈ 8.5–10ms 即天花板）：
    - 文本收集成本：0.6.3 纯解析快 20-25%（靠丢文本换的，禁止）；目标不丢数据收回成本。
-   - 每事件双 `advance(delta)`（note_acc + ctrl_acc）合并为单一 tick。
-   - 4 个近重复 `parse_fast_track_*` 合并（减少 I-cache 与维护面）。
-   - 分配策略：`NoteAccumulator::new` 固定 `Vec::with_capacity(512)`，大轨反复 realloc。
-   - 每 commit 单假设 + 同机 A/B（15 次正式运行、min 口径）。
-2. **P4（Tier2 侧，已量化）控制密集归并**：StarT +7% 的根因是全局 `control_events` 先归并再
-   `sort_by_key(tick)`（217k 事件全排序）。因每轨控制事件本就按 tick 有序，改 k 路归并
-   （BinaryHeap，O(n log k)）或按 (tick, track) 二级键，可收回并进一步加速；先 A/B 再定。
-3. **Tier2 变体 B（可选）**：若峰值内存成为约束，改用 `_parallel_` 流式 API + 仅包住
-   「轻量 extend」的小锁（峰值 ~旧实现，但失去轨序确定性）；需重新 A/B。
-4. **P5 单巨轨轨内并行**：gen-single-giant 13.36ms 且 P3 无收益 → 轻量扫描安全边界
-   `(offset, absolute_tick, running_status)` → 并行 chunk → O(边界状态) 缝合。
-5. **P2 矩阵补全（剩余项）**：矩阵驱动脚本（版本 × parallel/serial × 线程 × 素材）；
+   - 每事件双 `advance(delta)` 合并；4 个近重复 `parse_fast_track_*` 合并；NoteAccumulator 容量策略。
+   - **先做"删除式 A/B"测上限**，再单假设实现；机器必须空闲（见 §9）。
+2. **P5 单巨轨轨内并行**：gen-single-giant 13.36ms 且 P3 无收益；164M 素材是 826 轨均衡，
+   仍需 format 0 真实样本统计后再决定投入。
+3. **Tier2 落地（待 midly 全部改动完成后）**：按 `perf/tier2/README.md` 接入，并**顺手接
+   `track_name`**（164M 实测可再降 -57%）；之后做控制事件 k-way merge 收回 StarT 的 +7%。
+4. **P2 矩阵补全（剩余项）**：矩阵驱动脚本（版本 × parallel/serial × 线程 × 素材）；
    mmap 冷/热页缓存分离；电源模式固定并记录。
-6. EOT 后续（可选）：Strict 解析模式 API；`repeated_eot_count`；下游用 `timing` 做悬挂音符/Hold
-   收尾与 Trim 策略。
+5. EOT 后续（可选）：Strict 解析模式 API；下游用 `timing` 做悬挂音符/Hold 收尾与 Trim 策略。
 
 ## 9. 技术陷阱清单
 
@@ -225,6 +234,10 @@ cd F:\lumino-rs; cargo test -p lumino-midi-model -p lumino-midi-loader
   否则 `cargo build`/`cargo test` 在清单解析阶段即失败（与 `lumino` feature 无关）。
 - `lumino-bench digest` 的规范摘要按 (tick, track, …) 排序：不要用未排序摘要做门禁（跨轨同 tick
   顺序随调度变化，会假报不一致）。
+- **测量前必须确认机器空闲**：本会话在 CPU 负载 100%（Zed/播放器/Edge）时测得 Pi minimal
+  22–25ms（正常 8.5–10ms），墙钟直接翻倍；用 `Get-CimInstance Win32_Processor` 看 LoadPercentage。
+- **lumino-rs 工作区可能被用户重置/提交**：任何未提交改动都会消失。Tier2 类改动只在临时窗口做，
+  测完立刻 `git checkout --`，实现留档在 `perf/tier2/`。
 
 ## 10. 环境事实
 
