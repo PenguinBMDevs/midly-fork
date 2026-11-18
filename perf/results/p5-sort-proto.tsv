@@ -15,3 +15,7 @@ A5	e2e-pi-before	3141592	8.42	-	-	-	-	median
 A5	e2e-pi-after-radix-1m	3141592	-	-	-	8.80	-	+4.5%（min 相同 7.74）
 A5	e2e-pi-after-radix-4k	3141592	-	-	-	10.44	-	阈值 4096 时 +24%（小轨回退，已证伪）
 A5	digest-164m	164206462	-	-	-	-	-	radix 与稳定排序逐字段一致（combined=3e919e3b…）
+A5-prod	e2e-164m-radix-prod	164206462	-	-	-	543.35	-	median，-25.5%（lb-after 728.76）；min 529.14
+A5-prod	e2e-164m-peak-prod	164206462	-	-	-	3696.8	-	baseline 3428.7（+7.8%）
+A5-prod	e2e-pi-radix-prod	3141592	-	-	-	10.37	-	baseline 10.47（无回退）；min 8.47
+A5-prod	digest-164m-prod	164206462	-	-	-	-	-	生产 note_sort 与 #302 逐字段一致

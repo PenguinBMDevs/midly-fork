@@ -330,12 +330,13 @@ cd F:\lumino-rs; cargo test -p lumino-midi-model -p lumino-midi-loader
    （164M 与 StarT210k），**没有任何真实 format 0 素材** → 无法给出「单轨占主导」的分布证据。
    A3 上限：单轨 101 Mevents/s vs 多轨 445 Mevents/s（4.3×），但 8.8M 单轨绝对时间仅 85ms。
    **结论：P5 暂不立项**，除非后续出现真实的 format 0/单巨轨素材或用户侧统计。
-3. **Tier2 落地 ✅ 已开 PR**：`lumino-rs` 分支 `feat/midi-tier2`（`f8b47981`，已推送）→ PR #302（base `dev`）。
+3. **Tier2 落地 ✅ 已合并**：`lumino-rs` PR #302（base `dev`，merge commit `e7407dff`）。
    本地验证：181 绿 + digest 一致 + Pi -51% / 164M -74%；依赖为 fork `rev = e8edb9a`。
    **后续优化（A4 数据重排）**：巨轨排序 + ChunkedList（450ms 临界路径）> P5 轨内解析；
    控制事件 k-way merge 已无价值（1.1ms）。
-   **A5 原型已完成**：稳定基数排序 → 164M 端到端 754→557ms（-26%），峰值 +7%；
-   等 #302 合并后开 follow-up PR。
+   **A5 已落地为 PR #303**（`feat/midi-track-radix-sort`，base 已改为 `dev`）：
+   稳定基数排序 → 164M 端到端 728.8→543.4ms（-25.5%），峰值 +7.8%；
+   等 CI 全绿后合并。
 4. **P2 矩阵补全（剩余项）**：矩阵驱动脚本（版本 × parallel/serial × 线程 × 素材）；
    mmap 冷/热页缓存分离；电源模式固定并记录。
 5. EOT 后续（可选）：Strict 解析模式 API；下游用 `timing` 做悬挂音符/Hold 收尾与 Trim 策略。
