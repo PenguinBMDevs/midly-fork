@@ -79,6 +79,13 @@ impl<'a> TrackIter<'a> {
         }
     }
 
+    /// 尚未消费的字节数。EOT 诊断用：EOT 解码完毕时该值 >0 表示声明的
+    /// 轨道结束位置之后仍有数据（事件或尾部垃圾）。热循环外调用，无开销。
+    #[inline]
+    pub(crate) fn remaining_len(&self) -> usize {
+        self.data.len().saturating_sub(self.offset)
+    }
+
     #[inline(always)]
     pub(crate) fn next_event(&mut self) -> Option<(u32, MidiEvent<'a>)> {
         let len = self.data.len();

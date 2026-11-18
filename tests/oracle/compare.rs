@@ -179,4 +179,10 @@ pub fn assert_track_eq(expected: &RefTrack, actual: &TrackAllEvents, name: &str,
         expected.midi_port, actual.midi_port,
         "{ctx}: midi_port 不一致"
     );
+
+    // ── EOT 结构元数据（指导书 §2.5）：三个时间 + 畸形尾部诊断 ──
+    assert_eq!(
+        expected.timing, actual.timing,
+        "{ctx}: TrackTiming 不一致（eot/content/physical/after_eot）"
+    );
 }

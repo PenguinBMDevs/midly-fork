@@ -11,6 +11,7 @@
 //! - F0 SysEx 与 F7 Escape 均并入 sys_ex（快路径当前行为）；
 //! - MidiPort 取首个出现值；TrackName(0x03) 不收录（下游 scan_track_names 负责）。
 
+use midly::loader::TrackTiming;
 use midly::{MetaMessage, MidiMessage, TrackEvent, TrackEventKind};
 
 /// 参考音符（与 PackedNote 字段一一对应，不含 track）。
@@ -48,6 +49,8 @@ pub struct RefTrack {
     pub texts: Vec<(u32, u8, Vec<u8>)>,
     pub sysex: Vec<(u32, Vec<u8>)>,
     pub midi_port: Option<u8>,
+    /// EOT 结构元数据（指导书 §2.5），由参考链独立计算。
+    pub timing: TrackTiming,
 }
 
 /// 独立实现的单轨累加。
@@ -56,9 +59,31 @@ pub fn accumulate_track(track: &[TrackEvent], _idx: usize) -> RefTrack {
     // 活跃音符表：(channel, key) -> (start_tick, attack_velocity)
     let mut active: [[Option<(u32, u8)>; 256]; 16] = [[None; 256]; 16];
     let mut tick: u32 = 0;
+    // EOT 结构元数据：首个 EOT、最后非 EOT 事件、EOT 后事件。
+    // 0x2F 无论长度（Smf 分类为 EndOfTrack 或 Unknown）都按 EOT 处理，
+    // 与快路径「event_type == 0x2F 即 EOT」的宽松契约一致。
+    let mut eot_tick: Option<u32> = None;
+    let mut content_end_tick: u32 = 0;
+    let mut has_events_after_eot = false;
 
     for event in track {
         tick = tick.saturating_add(event.delta.as_int());
+        let is_eot = matches!(&event.kind, TrackEventKind::Meta(MetaMessage::EndOfTrack))
+            || matches!(
+                &event.kind,
+                TrackEventKind::Meta(MetaMessage::Unknown(0x2F, _))
+            );
+        if eot_tick.is_some() {
+            has_events_after_eot = true;
+        }
+        if is_eot {
+            if eot_tick.is_none() {
+                eot_tick = Some(tick);
+            }
+        } else {
+            content_end_tick = tick;
+        }
+
         match &event.kind {
             TrackEventKind::Midi { channel, message } => {
                 let ch = channel.as_int();
@@ -191,6 +216,12 @@ pub fn accumulate_track(track: &[TrackEvent], _idx: usize) -> RefTrack {
             }
         }
     }
+    out.timing = TrackTiming {
+        eot_tick,
+        physical_end_tick: tick,
+        content_end_tick,
+        has_events_after_eot,
+    };
     out
 }
 

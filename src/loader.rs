@@ -1277,6 +1277,45 @@ where
     }
 }
 
+/// 单轨时间边界；EOT 是结构信息，不进入音频事件流（指导书 §2.5）。
+///
+/// 三个时间必须分离：
+/// - [`eot_tick`](Self::eot_tick)：文件显式声明的轨道结束位置（首个 `FF 2F`）；
+/// - [`content_end_tick`](Self::content_end_tick)：最后一个**非 EOT** 事件位置；
+/// - [`physical_end_tick`](Self::physical_end_tick)：物理读取到的最后事件位置。
+///
+/// 解析器只报告边界；`audible_end_tick`（release / 效果器尾音）由音频引擎计算，
+/// 不由解析器决定。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TrackTiming {
+    /// 文件显式声明的 EOT 位置；未出现时为 `None`（缺 EOT 诊断）。
+    pub eot_tick: Option<u32>,
+    /// 物理读取到的最后事件位置，包括 EOT 之后发现的异常事件。
+    pub physical_end_tick: u32,
+    /// 最后一个非 EOT 事件的位置，用于有效内容范围。
+    pub content_end_tick: u32,
+    /// 是否在首个 EOT 后仍发现事件（兼容模式保留这些事件，仅作诊断；
+    /// 重复 EOT 也计入）。
+    pub has_events_after_eot: bool,
+}
+
+impl TrackTiming {
+    /// 文件声明结尾；缺失 EOT 时退化为物理末尾。
+    ///
+    /// 调用方若需要区分「声明结尾」与「fallback」，应同时检查
+    /// [`eot_tick`](Self::eot_tick) 是否为 `None`。
+    pub fn declared_end_tick(&self) -> u32 {
+        self.eot_tick.unwrap_or(self.physical_end_tick)
+    }
+
+    /// Strict 模式门控：`false` 表示该轨在 EOT 后仍有事件，严格消费者应拒绝。
+    ///
+    /// 解析器自身始终按兼容模式保留数据（不得静默丢数据），是否拒绝属产品策略。
+    pub fn is_strict_clean(&self) -> bool {
+        !self.has_events_after_eot
+    }
+}
+
 /// All events extracted from a single track, using borrowed slices for text/SysEx data.
 ///
 /// This is the most complete extraction interface in `midly`. It passes **borrowed**
@@ -1314,6 +1353,11 @@ pub struct TrackAllEvents<'a> {
     /// the first occurrence). `None` when the track has no MidiPort meta
     /// (callers should default to port 0).
     pub midi_port: Option<u8>,
+    /// 轨道时间边界（EOT / 内容末尾 / 物理末尾），见 [`TrackTiming`]。
+    ///
+    /// EOT 本身不进入上述音频事件流：它只声明轨道结束位置。兼容模式下
+    /// EOT 后事件照常保留（`has_events_after_eot` 标记），不静默丢数据。
+    pub timing: TrackTiming,
 }
 
 /// 直接从 MIDI 字节流按轨提取全部事件（音符 + 速度 + 拍号 + 调号 + 控制事件 +
@@ -1559,10 +1603,20 @@ fn parse_fast_track_all_events(mut events: FastTrackIter, track_idx: u16) -> Tra
     let mut text_events = Vec::new();
     let mut sys_ex = Vec::new();
     let mut midi_port: Option<u8> = None;
+    // EOT 结构元数据（指导书 §2）：EOT 不进入事件流，只记录时间边界。
+    // 全部记录都发生在 EOT 分支（每轨最多几次），热循环零额外开销。
+    let mut eot_tick: Option<u32> = None;
+    // 首个 EOT 解码后是否仍有未消费字节（即 EOT 后还有事件/尾部数据）。
+    let mut eot_has_bytes_after = false;
+    // 最后一个 EOT 是否恰好是轨道最后一条事件。
+    let mut last_eot_ends_track = false;
+    // 最后一个 EOT 之前那条事件的 tick（= EOT tick - EOT delta）。
+    let mut last_eot_prev_tick: u32 = 0;
 
     while let Some((delta, event)) = events.next_event() {
         note_acc.advance(delta);
         ctrl_acc.advance(delta);
+        let tick = note_acc.current_tick;
 
         match event {
             MidiEvent::NoteOn {
@@ -1593,59 +1647,74 @@ fn parse_fast_track_all_events(mut events: FastTrackIter, track_idx: u16) -> Tra
                 ctrl_acc.channel_aftertouch(channel, velocity)
             }
             MidiEvent::SysEx { data } => {
-                sys_ex.push(PackedSysExEvent::new(
-                    note_acc.current_tick,
-                    track_idx,
-                    data,
-                ));
+                sys_ex.push(PackedSysExEvent::new(tick, track_idx, data));
             }
-            MidiEvent::Meta { event_type, data } => match event_type {
-                0x51 if data.len() == 3 => {
-                    let microseconds =
-                        ((data[0] as u32) << 16) | ((data[1] as u32) << 8) | (data[2] as u32);
-                    note_acc.tempo_microseconds(microseconds);
-                }
-                0x58 if data.len() >= 2 => {
-                    time_signatures.push(PackedTimeSignatureEvent::new(
-                        note_acc.current_tick,
-                        data[0],
-                        data[1],
-                    ));
-                }
-                0x59 if data.len() >= 2 => {
-                    key_signatures.push(PackedKeySignatureEvent::new(
-                        note_acc.current_tick,
-                        data[0] as i8,
-                        data[1] != 0,
-                    ));
-                }
-                0x05 => {
-                    lyrics.push(PackedTextEvent::new(note_acc.current_tick, track_idx, data));
-                }
-                0x06 => {
-                    markers.push(PackedTextEvent::new(note_acc.current_tick, track_idx, data));
-                }
-                // 文本类元事件：全量保留（此前静默丢弃）。0x03 TrackName 除外——
-                // 下游 scan_track_names 已处理，重复收集会造成双写歧义。
-                0x01 | 0x02 | 0x04 | 0x07 | 0x08 | 0x09 => {
-                    text_events.push(PackedTextMetaEvent::new(
-                        note_acc.current_tick,
-                        track_idx,
-                        event_type,
-                        data,
-                    ));
-                }
-                0x21 if data.len() >= 1 => {
-                    if midi_port.is_none() {
-                        midi_port = Some(data[0]);
+            MidiEvent::Meta { event_type, data } => {
+                // EOT 只在这里处理：元事件占比极低，不给普通事件增加分支。
+                if event_type == 0x2F {
+                    if eot_tick.is_none() {
+                        eot_tick = Some(tick);
+                        eot_has_bytes_after = events.remaining_len() > 0;
                     }
+                    last_eot_ends_track = events.remaining_len() == 0;
+                    last_eot_prev_tick = tick.saturating_sub(delta);
                 }
-                _ => {}
-            },
+                match event_type {
+                    0x51 if data.len() == 3 => {
+                        let microseconds =
+                            ((data[0] as u32) << 16) | ((data[1] as u32) << 8) | (data[2] as u32);
+                        note_acc.tempo_microseconds(microseconds);
+                    }
+                    0x58 if data.len() >= 2 => {
+                        time_signatures.push(PackedTimeSignatureEvent::new(tick, data[0], data[1]));
+                    }
+                    0x59 if data.len() >= 2 => {
+                        key_signatures.push(PackedKeySignatureEvent::new(
+                            tick,
+                            data[0] as i8,
+                            data[1] != 0,
+                        ));
+                    }
+                    0x05 => {
+                        lyrics.push(PackedTextEvent::new(tick, track_idx, data));
+                    }
+                    0x06 => {
+                        markers.push(PackedTextEvent::new(tick, track_idx, data));
+                    }
+                    // 文本类元事件：全量保留（此前静默丢弃）。0x03 TrackName 除外——
+                    // 下游 scan_track_names 已处理，重复收集会造成双写歧义。
+                    0x01 | 0x02 | 0x04 | 0x07 | 0x08 | 0x09 => {
+                        text_events
+                            .push(PackedTextMetaEvent::new(tick, track_idx, event_type, data));
+                    }
+                    0x21 if data.len() >= 1 => {
+                        if midi_port.is_none() {
+                            midi_port = Some(data[0]);
+                        }
+                    }
+                    _ => {}
+                }
+            }
             _ => {}
         }
     }
 
+    let physical_end_tick = note_acc.current_tick;
+    // EOT 结构元数据在循环后一次性推导（热循环零额外 store）：
+    // - 无 EOT：全部事件都是内容 → 内容末尾 = 物理末尾；
+    // - EOT 之后仍有数据：内容末尾 = 物理末尾（末尾为重复 EOT 时回退到其前一事件）；
+    // - EOT 即最后事件：内容末尾 = EOT 前一事件的 tick。
+    //
+    // 已知边界（畸形输入，已由 `has_events_after_eot` 标记）：连续重复 EOT
+    // 且都在轨道末尾时，`content_end_tick` 回退到首个 EOT 的 tick，而非更早的内容末尾。
+    let has_events_after_eot = eot_has_bytes_after;
+    let content_end_tick = match eot_tick {
+        None => physical_end_tick,
+        Some(_) if last_eot_ends_track => last_eot_prev_tick,
+        Some(_) => physical_end_tick,
+    };
+
+    let physical_end_tick = note_acc.current_tick;
     let (notes, tempo_changes) = note_acc.finish();
     let control_events = ctrl_acc.finish();
 
@@ -1660,6 +1729,12 @@ fn parse_fast_track_all_events(mut events: FastTrackIter, track_idx: u16) -> Tra
         text_events,
         sys_ex,
         midi_port,
+        timing: TrackTiming {
+            eot_tick,
+            physical_end_tick,
+            content_end_tick,
+            has_events_after_eot,
+        },
     }
 }
 
