@@ -5,19 +5,19 @@ A1	E1-text-collect	Pi.mid	e0	8.03	8.83	真实素材几乎无文本事件
 A1	E1-text-collect	Pi.mid	e1-no-text	7.88	8.62	噪声内（-1.9%）
 A1	E2-single-advance	Pi.mid	e0	7.89	8.78	双 advance 合并上限
 A1	E2-single-advance	Pi.mid	e2-single-advance	7.40	8.81	噪声内，不立项
-A1	E2-single-advance	gen-single-giant.mid	e0	10.05	10.44	
+A1	E2-single-advance	gen-single-giant.mid	e0	10.05	10.44	-
 A1	E2-single-advance	gen-single-giant.mid	e2-single-advance	9.78	10.24	噪声内（-2.7% min，median 持平）
 A1	E3-capacity	gen-single-giant.mid	e0	10.09	10.41	512 起步倍增
 A1	E3-capacity	gen-single-giant.mid	e3-capacity	8.41	8.69	-16.6%
-A1	E3-capacity	Pi.mid	e0	8.24	8.94	
+A1	E3-capacity	Pi.mid	e0	8.24	8.94	-
 A1	E3-capacity	Pi.mid	e3-capacity	5.28	6.32	-36%
 A1	E3-capacity	StarT164M.mid	e0	396.03	454.66	安静窗口
 A1	E3-capacity	StarT164M.mid	e3-capacity	303.04	338.37	-23.5%
 A2	capacity-hint	Pi.mid	e0	9.26	10.01	机器 15-22% 负载
 A2	capacity-hint	Pi.mid	a2-capacity	6.49	7.16	-30%
-A2	capacity-hint	gen-single-giant.mid	e0	10.02	10.47	
+A2	capacity-hint	gen-single-giant.mid	e0	10.02	10.47	-
 A2	capacity-hint	gen-single-giant.mid	a2-capacity	8.62	8.86	-14%
-A2	capacity-hint	gen-text-dense.mid	e0	5.46	5.95	
+A2	capacity-hint	gen-text-dense.mid	e0	5.46	5.95	-
 A2	capacity-hint	gen-text-dense.mid	a2-capacity	5.03	5.66	-7.9%
 A2	capacity-hint	StarT164M.mid	e0	512.73	580.01	负载 22-45%，绝对值偏高，仅看同批比值
 A2	capacity-hint	StarT164M.mid	a2-capacity	350.10	397.30	-31.7%（同批）
@@ -25,3 +25,6 @@ A2	peak-retain-all	Pi.mid	e0	-	-	peak=116.2MB
 A2	peak-retain-all	Pi.mid	a2-capacity	-	-	peak=114.9MB（-1.1%）
 A2	peak-retain-all	StarT164M.mid	e0	-	-	peak=5844.3MB
 A2	peak-retain-all	StarT164M.mid	a2-capacity	-	-	peak=5689.1MB（-2.7%）
+A3	p5-ceiling	star164-largest-track-format0.mid	minimal-t8	85.10	86.61	1 轨 / 8,795,520 音符 → 101 Mevents/s
+A3	p5-ceiling	gen-single-giant.mid	minimal-t8	9.03	9.43	1 轨 / 1,000,000 音符 → 106 Mevents/s
+A3	p5-ceiling	Pi.mid	minimal-t8	5.93	6.97	30 轨 / 3,141,592 音符 → 445 Mevents/s
