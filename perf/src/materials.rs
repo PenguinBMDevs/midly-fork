@@ -5,11 +5,13 @@
 //! 同样字节；`tests` 模块用 `Smf::parse` + 快路径双重校验生成结果，防止
 //! 「素材本身畸形导致性能结论失真」。
 //!
-//! 四类形态：
+//! 五类形态：
 //! - `gen-single-small.mid`：单轨小文件（1 轨 / 120 音符 / ~1KB）；
 //! - `gen-single-giant.mid`：单巨轨（1 轨 / 1,000,000 音符）——P5 轨内并行素材；
 //! - `gen-control-dense.mid`：控制密集（8 轨 / 12.8 万音符 / 128 万控制事件）；
-//! - `gen-sysex-dense.mid`：SysEx 密集（4 轨 / 800 条 8KB SysEx ≈ 6.4MB）。
+//! - `gen-sysex-dense.mid`：SysEx 密集（4 轨 / 800 条 8KB SysEx ≈ 6.4MB）；
+//! - `gen-text-dense.mid`：文本密集（8 轨 / 48 万音符 / 144 万文本类 meta +
+//!   48 万歌词 + 48 万 CuePoint）——P4「文本收集成本」的**上限**素材。
 
 use std::fs;
 use std::path::Path;
@@ -22,6 +24,10 @@ pub fn generate_all(out_dir: &Path) -> std::io::Result<Vec<(String, usize)>> {
         ("gen-single-giant.mid", single_giant_track(1_000_000)),
         ("gen-control-dense.mid", control_dense(8, 16_000)),
         ("gen-sysex-dense.mid", sysex_dense(4, 200, 8 * 1024)),
+        (
+            "gen-text-dense.mid",
+            text_dense(TEXT_TRACKS, TEXT_GROUPS_PER_TRACK),
+        ),
     ];
     let mut written = Vec::new();
     for (name, bytes) in items {
@@ -45,6 +51,10 @@ pub const SYSEX_PER_TRACK: usize = 200;
 pub const SYSEX_PAYLOAD: usize = 8 * 1024;
 /// SysEx 密集：轨数。
 pub const SYSEX_TRACKS: usize = 4;
+/// 文本密集：轨数。
+pub const TEXT_TRACKS: usize = 8;
+/// 文本密集：每轨「组」数。每组 = 1 音符（on+off）+ 1 歌词 + 1 Text(0x01) + 1 CuePoint(0x07)。
+pub const TEXT_GROUPS_PER_TRACK: u32 = 60_000;
 
 // ── 四类素材 ────────────────────────────────────────────────────────────────
 
@@ -137,8 +147,39 @@ pub fn sysex_dense(tracks: usize, count: usize, payload_len: usize) -> Vec<u8> {
     smf(1, 480, bodies)
 }
 
-// ── SMF 写入原语 ────────────────────────────────────────────────────────────
+/// 文本密集：format 1、`tracks` 轨、每轨 `groups` 组。
+///
+/// 每组 = `NoteOn` + 歌词(0x05) + Text(0x01) + CuePoint(0x07) + `NoteOff`，
+/// 文本类事件占全部事件的 60%。用途：测量「文本收集成本」的**上限**——
+/// 真实 `.kar` 文件是 1 歌词/音节，不会有 3:5 的文本占比，所以这组数字是
+/// 删除式实验的上界，不是预测值。
+pub fn text_dense(tracks: usize, groups: u32) -> Vec<u8> {
+    // 载荷故意短（8/12/6 字节）：真实歌词/文本多为短串，长串只会放大 memcpy
+    // 而不改变 Vec push 的固定开销。
+    const LYRIC: &[u8] = b"la-la-la";
+    const TEXT: &[u8] = b"text-payload";
+    const CUE: &[u8] = b"cue-01";
+    let mut bodies = Vec::with_capacity(tracks);
+    for tr in 0..tracks {
+        let ch = (tr % 16) as u8;
+        let mut t = Vec::with_capacity(groups as usize * 48 + 64);
+        ev_meta(&mut t, 0, 0x03, format!("gen-text-{tr}").as_bytes());
+        ev_meta(&mut t, 0, 0x51, &[0x07, 0xA1, 0x20]);
+        for i in 0..groups {
+            let key = 60 + (i % 12) as u8;
+            ev_note_on(&mut t, if i == 0 { 0 } else { 1 }, ch, key, 100);
+            ev_meta(&mut t, 0, 0x05, LYRIC);
+            ev_meta(&mut t, 0, 0x01, TEXT);
+            ev_meta(&mut t, 0, 0x07, CUE);
+            ev_note_off(&mut t, 1, ch, key, 0);
+        }
+        ev_meta(&mut t, 0, 0x2F, &[]);
+        bodies.push(t);
+    }
+    smf(1, 480, bodies)
+}
 
+// ── SMF 写入原语 ────────────────────────────────────────────────────────────
 /// MThd + N × MTrk 组装。
 fn smf(format: u16, division: u16, bodies: Vec<Vec<u8>>) -> Vec<u8> {
     let mut out = Vec::with_capacity(bodies.iter().map(|b| b.len() + 8).sum::<usize>() + 14);
@@ -290,6 +331,19 @@ mod tests {
                 "SysEx 密集每轨 SysEx 条数（含 Escape）"
             );
         }
+
+        // 文本密集：每轨 groups 音符 + groups 歌词 + groups Text + groups CuePoint
+        let bytes = text_dense(TEXT_TRACKS, TEXT_GROUPS_PER_TRACK);
+        let smf = Smf::parse(&bytes).expect("text-dense 必须可被 Smf::parse");
+        assert_eq!(smf.tracks.len(), TEXT_TRACKS);
+        for d in digest(&bytes) {
+            assert_eq!(d.0, TEXT_GROUPS_PER_TRACK as usize, "文本密集每轨音符数");
+            assert_eq!(
+                d.3,
+                TEXT_GROUPS_PER_TRACK as usize * 3,
+                "文本密集每轨文本类事件数（歌词 + Text + CuePoint）"
+            );
+        }
     }
 
     /// 生成器确定性：同参数两次生成必须字节一致（素材可复现）。
@@ -303,6 +357,10 @@ mod tests {
         assert_eq!(
             sysex_dense(SYSEX_TRACKS, SYSEX_PER_TRACK, SYSEX_PAYLOAD),
             sysex_dense(SYSEX_TRACKS, SYSEX_PER_TRACK, SYSEX_PAYLOAD)
+        );
+        assert_eq!(
+            text_dense(TEXT_TRACKS, TEXT_GROUPS_PER_TRACK),
+            text_dense(TEXT_TRACKS, TEXT_GROUPS_PER_TRACK)
         );
     }
 }

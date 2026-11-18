@@ -285,10 +285,13 @@ fn run_bench_cli(path: &str, bytes: &[u8], file_mb: f64, opts: &[String]) -> Exi
             "--callback" => {
                 cfg.callback = match val {
                     "minimal" => bench::CallbackKind::Minimal,
+                    "retain-all" => bench::CallbackKind::Retain,
                     "realistic" => bench::CallbackKind::Realistic,
                     "realistic-par" => bench::CallbackKind::ParallelApi,
                     other => {
-                        eprintln!("未知 callback: {other}（可选 minimal|realistic|realistic-par）");
+                        eprintln!(
+                            "未知 callback: {other}（可选 minimal|retain-all|realistic|realistic-par）"
+                        );
                         return ExitCode::FAILURE;
                     }
                 }

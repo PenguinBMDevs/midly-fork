@@ -20,12 +20,14 @@ use crate::sys;
 /// 回调形态。
 ///
 /// - `Minimal`：只计数 ≈ 纯解析 + 派发；
+/// - `Retain`：保留全部逐轨产物但**不排序、不 clone**——真实 app「持有全量音符」的峰值口径；
 /// - `Realistic`：旧 `FnMut` 全局锁路径，复刻下游逐轨工作（排序 / 转换 / 文本复制 / 归并）；
 /// - `ParallelApi`：P3 无锁并行路径（`_collect_` API）——逐轨工作在工作线程内并行完成，
 ///   仅最终按轨序归并串行。
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum CallbackKind {
     Minimal,
+    Retain,
     Realistic,
     ParallelApi,
 }
@@ -35,6 +37,7 @@ impl CallbackKind {
     pub fn label(self) -> &'static str {
         match self {
             CallbackKind::Minimal => "minimal",
+            CallbackKind::Retain => "retain-all",
             CallbackKind::Realistic => "realistic",
             CallbackKind::ParallelApi => "realistic-par",
         }
@@ -42,7 +45,12 @@ impl CallbackKind {
 
     /// 是否执行下游 realistic 工作负载（逐轨排序 / 产物保留 / 文本复制）。
     pub fn realistic_work(self) -> bool {
-        self != CallbackKind::Minimal
+        matches!(self, CallbackKind::Realistic | CallbackKind::ParallelApi)
+    }
+
+    /// 是否保留逐轨产物（峰值口径；不做排序 / 文本复制）。
+    pub fn retain_work(self) -> bool {
+        matches!(self, CallbackKind::Retain)
     }
 }
 
@@ -110,7 +118,7 @@ struct Sink {
 }
 
 impl Sink {
-    fn handle(&mut self, idx: usize, mut ev: TrackAllEvents, realistic: bool) {
+    fn handle(&mut self, idx: usize, mut ev: TrackAllEvents, mode: CallbackKind) {
         let t0 = Instant::now();
         let n = ev.notes.len();
         let e = n
@@ -123,7 +131,7 @@ impl Sink {
             + ev.sys_ex.len();
         #[cfg(feature = "text-events")]
         let e = e + ev.text_events.len();
-        if realistic {
+        if mode.realistic_work() {
             // 模拟下游：稳定排序（start_tick）→ 转换进每轨连续 Vec → 文本复制 → 全局归并。
             // 当前 API 回调在全局 Mutex 内执行，这些工作全部串行（基线现状）。
             ev.notes.sort_by_key(|n| n.start_tick);
@@ -141,6 +149,12 @@ impl Sink {
             for s in &ev.sys_ex {
                 self.text_arena.extend_from_slice(s.data);
             }
+        } else if mode.retain_work() {
+            // 真实 app 形态：整轨产物留到解析结束（不 clone、不排序），峰值 =
+            // Σ(每轨 Vec 容量)。用于量化「容量预估」对峰值的影响。
+            self.per_track_notes.push(ev.notes);
+            self.global_controls.extend(ev.control_events);
+            self.global_tempo.extend(ev.tempo_changes);
         }
         self.notes += n as u64;
         self.events += e as u64;
@@ -263,13 +277,13 @@ pub fn run_bench(bytes: &[u8], file_size: u64, cfg: &BenchConfig) -> Result<Benc
         let cpu0 = sys::cpu_time_secs();
         let t0 = Instant::now();
         match cfg.callback {
-            CallbackKind::Minimal | CallbackKind::Realistic => {
-                let realistic = cfg.callback.realistic_work();
+            CallbackKind::Minimal | CallbackKind::Retain | CallbackKind::Realistic => {
+                let mode = cfg.callback;
                 // serial 构建需要 mut（FnMut 捕获 sink）；parallel 构建 install 按值消费，豁免 unused_mut。
                 #[cfg_attr(feature = "parallel", allow(unused_mut))]
                 let mut invoke = || {
                     extract_all_events_per_track_streaming_from_bytes(bytes, |idx, ev| {
-                        sink.handle(idx, ev, realistic);
+                        sink.handle(idx, ev, mode);
                     })
                 };
                 #[cfg(feature = "parallel")]
