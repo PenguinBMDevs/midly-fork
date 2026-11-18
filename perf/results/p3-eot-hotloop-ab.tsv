@@ -1,0 +1,7 @@
+label	file	mode	callback	threads	warmup	runs	wall_median_ms	wall_min_ms	wall_max_ms	cpu_median_ms	mb_per_s	mevents_per_s	callback_sum_median_ms	serial_fraction	peak_ws_mb	notes	events	tracks	file_mb	merge_median_ms
+no-eot	F:\midly-fork\test-asset\Pi.mid	parallel	minimal	8	2	15	10.180	8.501	13.003	62.500	2364.60	308.706	0.002	0.0002	47.13	3141592	3142724	30	24.072	0.000
+eot-final	F:\midly-fork\test-asset\Pi.mid	parallel	minimal	8	2	15	10.880	9.165	14.367	46.875	2212.47	288.845	0.002	0.0002	47.14	3141592	3142724	30	24.072	0.000
+no-eot	F:\midly-fork\test-asset\Pi.mid	parallel	minimal	8	2	15	10.424	8.615	13.209	93.750	2309.43	301.504	0.002	0.0002	48.44	3141592	3142724	30	24.072	0.000
+eot-final	F:\midly-fork\test-asset\Pi.mid	parallel	minimal	8	2	15	10.478	8.524	14.592	31.250	2297.33	299.924	0.002	0.0002	47.70	3141592	3142724	30	24.072	0.000
+no-eot	F:\midly-fork\test-asset\Pi.mid	parallel	minimal	8	2	15	9.895	9.322	13.682	62.500	2432.90	317.623	0.002	0.0002	46.65	3141592	3142724	30	24.072	0.000
+eot-final	F:\midly-fork\test-asset\Pi.mid	parallel	minimal	8	2	15	10.325	9.030	13.270	62.500	2331.48	304.383	0.002	0.0002	48.63	3141592	3142724	30	24.072	0.000
