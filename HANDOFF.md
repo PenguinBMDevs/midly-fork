@@ -178,6 +178,11 @@
 但 164M 文件最大轨只占 5.4% → 对它 P5 最多省 ~4%；**是否立项仍取决于
 「format 0 / 单巨轨占主导」的真实素材分布**。
 
+**P5 立项门槛扫描（同日）**：`F:\Soundfont Collection v1\` 共 52GB / 8972 文件，
+其中 **只有 2 个 MIDI**（164M、StarT210k），**没有真实 format 0 素材**。
+→ 无法证伪「P5 无用」，也无法证实「P5 有用」；按数据驱动原则**暂不立项**。
+
+
 
 
 - 计量限制：`GetProcessTimes` 按 15.625ms tick 量化（CPU 仅粗口径）；机器波动 ±2ms（同配置复测）；结论一律用 min/median 区间 + 同批交替 A/B。
@@ -265,7 +270,11 @@ cd F:\lumino-rs; cargo test -p lumino-midi-model -p lumino-midi-loader
 2. **P5 单巨轨轨内并行**：gen-single-giant 13.36ms 且 P3 无收益。
    **素材已就位**：从 164M 真实文件抽轨 769 → 单轨 format 0（8,795,520 音符，67MB，
    逐字节保真；`midly-perf to-format0` 可对任意源再生成）。注意：826 轨里最大轨占 5.4%，
-   对**该文件** P5 不是关键路径；P5 的价值仍取决于「单轨占主导」的素材分布（format 0 真实样本）。
+   对**该文件** P5 不是关键路径。
+   **立项门槛已扫描（2026-11-18）：`F:\Soundfont Collection v1\` 全目录 52GB 只有 2 个 MIDI**
+   （164M 与 StarT210k），**没有任何真实 format 0 素材** → 无法给出「单轨占主导」的分布证据。
+   A3 上限：单轨 101 Mevents/s vs 多轨 445 Mevents/s（4.3×），但 8.8M 单轨绝对时间仅 85ms。
+   **结论：P5 暂不立项**，除非后续出现真实的 format 0/单巨轨素材或用户侧统计。
 3. **Tier2 落地（待 midly 全部改动完成后）**：按 `perf/tier2/README.md` 接入，并**顺手接
    `track_name`**（164M 实测可再降 -57%）；之后做控制事件 k-way merge 收回 StarT 的 +7%。
 4. **P2 矩阵补全（剩余项）**：矩阵驱动脚本（版本 × parallel/serial × 线程 × 素材）；
