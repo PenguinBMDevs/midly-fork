@@ -108,8 +108,17 @@
 
 ## 3. 当前仓库状态（重要）
 
-- **fork**：`baseline/0.6.5` = 84d9a78，工作树干净。15 个提交**未签名、未推送**
-  （用户正在补 GPG；补好后统一签名/推送）。
+- **fork**：`baseline/0.6.5` = 19f00fd（补签后），工作树干净。**17 个提交已全部 GPG 签名
+  （`git log --format=%G?` 全为 G）**。
+  - **推送受阻**：`origin` 是 gh-proxy（只读，报 `No anonymous write access`）；直连
+    `https://github.com` 低速超时；`git@github.com:22` 被 reset；`ssh.github.com:443` 可达但
+    本机无 GitHub 公钥（`Permission denied (publickey)`）。
+  - **已备好 bundle**：`F:\midly-fork\baseline-0.6.5-signed-2026-11-18.bundle`（`*.bundle` 已 gitignore）。
+    在能访问 GitHub 的机器上：
+    `git fetch <bundle> baseline/0.6.5:baseline/0.6.5 && git push origin baseline/0.6.5`
+    （或用 SSH 443 + 配好公钥：`ssh://git@ssh.github.com:443/PenguinBMDevs/midly-fork.git`）。
+  - **旧 SHA 已作废**：补签是对 `master..baseline/0.6.5` 逐提交 `--amend -S` 重写，§2 表里的
+    SHA 不再是当前值，以 `git log --oneline` 为准。
 - **lumino-rs（dev）：工作区已被用户重置并提交自身工作，与 fork 无关联**。
   - 用户决策：**Tier2 合并等 midly 全部改动完成后再做**（依赖改造视为待办）。
   - 参考实现与接入步骤、A/B 数据：`perf/tier2/`（`README.md` + `document_build.rs.tier2`）。
