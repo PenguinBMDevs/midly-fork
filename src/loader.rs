@@ -1237,28 +1237,14 @@ where
             Vec<PackedTimeSignatureEvent>,
         ) + Send,
 {
-    let data = crate::ump::preprocess_smf(bytes);
-    let (_header, tracks_count, _division, raw) = fast_midi::parse_header(&data)?;
-    let tracks = fast_midi::iter_tracks_from_data(raw, tracks_count);
-
-    // Mutex 包装仅在 parallel 路径需要；serial 路径直接持有 track_handler。
-    // 无条件包装会在 serial 构建下先把 track_handler move 进 Mutex，
-    // 导致下方 `let mut handler = track_handler` E0382（0.6.5 基线 bug）。
-    #[cfg(feature = "parallel")]
-    let handler = std::sync::Mutex::new(track_handler);
-
+    // parallel 构建：委托给无锁并行 API，再以 Mutex 把 `FnMut` 语义串行化
+    // （与原实现等价：解析在锁外，回调在锁内）。
     #[cfg(feature = "parallel")]
     {
-        use rayon::prelude::*;
-        tracks
-            .into_par_iter()
-            .enumerate()
-            .for_each(|(track_idx, events)| {
-                let (notes, tempo_changes, control_events, time_signatures) =
-                    parse_fast_track_notes_control_and_time_signature_events(
-                        events,
-                        track_idx as u16,
-                    );
+        let handler = std::sync::Mutex::new(track_handler);
+        extract_notes_and_control_events_per_track_parallel_from_bytes(
+            bytes,
+            |track_idx, notes, tempo_changes, control_events, time_signatures| {
                 let mut h = handler.lock().unwrap_or_else(|e| e.into_inner());
                 h(
                     track_idx,
@@ -1267,11 +1253,15 @@ where
                     control_events,
                     time_signatures,
                 );
-            });
+            },
+        )
     }
     #[cfg(not(feature = "parallel"))]
     {
         let mut handler = track_handler;
+        let data = crate::ump::preprocess_smf(bytes);
+        let (_header, tracks_count, _division, raw) = fast_midi::parse_header(&data)?;
+        let tracks = fast_midi::iter_tracks_from_data(raw, tracks_count);
         for (track_idx, events) in tracks.into_iter().enumerate() {
             let (notes, tempo_changes, control_events, time_signatures) =
                 parse_fast_track_notes_control_and_time_signature_events(events, track_idx as u16);
@@ -1283,9 +1273,8 @@ where
                 time_signatures,
             );
         }
+        Ok(())
     }
-
-    Ok(())
 }
 
 /// All events extracted from a single track, using borrowed slices for text/SysEx data.
@@ -1344,38 +1333,215 @@ pub fn extract_all_events_per_track_streaming_from_bytes<F>(
 where
     F: for<'a> FnMut(usize, TrackAllEvents<'a>) + Send,
 {
-    let data = crate::ump::preprocess_smf(bytes);
-    let (_header, tracks_count, _division, raw) = fast_midi::parse_header(&data)?;
-    let tracks = fast_midi::iter_tracks_from_data(raw, tracks_count);
-
-    // Mutex 包装仅在 parallel 路径需要；serial 路径直接持有 track_handler。
-    // 无条件包装会在 serial 构建下先把 track_handler move 进 Mutex，
-    // 导致下方 `let mut handler = track_handler` E0382（0.6.5 基线 bug）。
-    #[cfg(feature = "parallel")]
-    let handler = std::sync::Mutex::new(track_handler);
-
+    // parallel 构建：委托给无锁并行 API，再以 Mutex 把 `FnMut` 语义串行化
+    // （与原实现等价：每轨解析在锁外，回调在锁内依次执行）。
     #[cfg(feature = "parallel")]
     {
-        use rayon::prelude::*;
-        tracks
-            .into_par_iter()
-            .enumerate()
-            .for_each(|(track_idx, events)| {
-                let events = parse_fast_track_all_events(events, track_idx as u16);
-                let mut h = handler.lock().unwrap_or_else(|e| e.into_inner());
-                h(track_idx, events);
-            });
+        let handler = std::sync::Mutex::new(track_handler);
+        extract_all_events_per_track_parallel_from_bytes(bytes, |track_idx, events| {
+            let mut h = handler.lock().unwrap_or_else(|e| e.into_inner());
+            h(track_idx, events);
+        })
     }
     #[cfg(not(feature = "parallel"))]
     {
         let mut handler = track_handler;
+        let data = crate::ump::preprocess_smf(bytes);
+        let (_header, tracks_count, _division, raw) = fast_midi::parse_header(&data)?;
+        let tracks = fast_midi::iter_tracks_from_data(raw, tracks_count);
         for (track_idx, events) in tracks.into_iter().enumerate() {
             let events = parse_fast_track_all_events(events, track_idx as u16);
             handler(track_idx, events);
         }
+        Ok(())
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// P3：无锁逐轨并行提取 API（指导书 §P3）
+//
+// 背景：上面的 `*_streaming_from_bytes` 用 `FnMut + Send` + 全局 `Mutex` 调用
+// 回调，下游逐轨工作（排序 / ChunkedList 构建 / 文本复制 / 全局归并）被强制串行。
+// P2 实测（Pi.mid，24MB/30 轨/3.14M 音符）该串行段占墙钟 ~80%，
+// Amdahl 拟合 wall≈S+P/N（S≈12.8ms 串行回调，P≈25.8ms 可并行解析，误差<1ms）。
+//
+// 下面三个 API 把回调约束改为 `Fn + Sync`，由 rayon 直接并发调用，库内部不持锁：
+// - `*_parallel_from_bytes`：流式逐轨回调，适合「本轨处理完立即释放」的消费者；
+// - `*_collect_from_bytes`：并行 map 后按轨序收集为 `Vec<T>`，即「每轨独立槽位 +
+//   按轨序轻量归并」的零锁实现，适合结果整体保留到解析结束的消费者（如主链路）。
+//
+// 旧 API 保留且语义不变（parallel 构建内部委托到此处，serial 构建退化为顺序调用）。
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// 逐轨并行提取音符/控制事件/拍号（无锁回调）。
+///
+/// 产出与 [`extract_notes_and_control_events_per_track_streaming_from_bytes`] 完全
+/// 一致；回调为 `Fn + Sync`，由工作线程**并发**调用，库内部不持全局锁。
+/// 回调顺序不保证（与轨序无关），但每轨恰好调用一次。
+/// 关闭 `parallel` 特性时退化为顺序调用，契约不变。
+#[cfg(feature = "alloc")]
+pub fn extract_notes_and_control_events_per_track_parallel_from_bytes<F>(
+    bytes: &[u8],
+    track_handler: F,
+) -> crate::Result<()>
+where
+    F: Fn(
+            usize,
+            Vec<PackedNote>,
+            Vec<(u32, f32)>,
+            Vec<PackedControlEvent>,
+            Vec<PackedTimeSignatureEvent>,
+        ) + Sync,
+{
+    let data = crate::ump::preprocess_smf(bytes);
+    let (_header, tracks_count, _division, raw) = fast_midi::parse_header(&data)?;
+    let tracks = fast_midi::iter_tracks_from_data(raw, tracks_count);
+
+    #[cfg(feature = "parallel")]
+    {
+        use rayon::prelude::*;
+        // 以 `&F` 捕获：闭包只需 `F: Sync` 即满足 Send + Sync，无需 `F: Send`。
+        let handler = &track_handler;
+        tracks
+            .into_par_iter()
+            .enumerate()
+            .for_each(|(track_idx, events)| {
+                let (notes, tempo_changes, control_events, time_signatures) =
+                    parse_fast_track_notes_control_and_time_signature_events(
+                        events,
+                        track_idx as u16,
+                    );
+                handler(
+                    track_idx,
+                    notes,
+                    tempo_changes,
+                    control_events,
+                    time_signatures,
+                );
+            });
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        for (track_idx, events) in tracks.into_iter().enumerate() {
+            let (notes, tempo_changes, control_events, time_signatures) =
+                parse_fast_track_notes_control_and_time_signature_events(events, track_idx as u16);
+            track_handler(
+                track_idx,
+                notes,
+                tempo_changes,
+                control_events,
+                time_signatures,
+            );
+        }
     }
 
     Ok(())
+}
+
+/// 逐轨并行提取全部事件（无锁回调）。
+///
+/// 事件内容与 [`extract_all_events_per_track_streaming_from_bytes`] 完全一致；
+/// 回调为 `Fn + Sync`，由工作线程**并发**调用，库内部不持全局锁。
+/// 调用方需要汇总多轨结果时应写每轨独立槽位（各槽位独立加锁，无全局竞争），
+/// 或直接使用 [`extract_all_events_per_track_collect_from_bytes`]。
+///
+/// 回调顺序不保证（与轨序无关），但每轨恰好调用一次，`track_idx` 覆盖 `0..轨数`。
+/// 关闭 `parallel` 特性时退化为顺序调用，契约不变。
+#[cfg(feature = "alloc")]
+pub fn extract_all_events_per_track_parallel_from_bytes<F>(
+    bytes: &[u8],
+    track_handler: F,
+) -> crate::Result<()>
+where
+    F: for<'a> Fn(usize, TrackAllEvents<'a>) + Sync,
+{
+    let data = crate::ump::preprocess_smf(bytes);
+    let (_header, tracks_count, _division, raw) = fast_midi::parse_header(&data)?;
+    let tracks = fast_midi::iter_tracks_from_data(raw, tracks_count);
+
+    #[cfg(feature = "parallel")]
+    {
+        use rayon::prelude::*;
+        // 以 `&F` 捕获：闭包只需 `F: Sync` 即满足 Send + Sync，无需 `F: Send`。
+        let handler = &track_handler;
+        tracks
+            .into_par_iter()
+            .enumerate()
+            .for_each(|(track_idx, events)| {
+                handler(
+                    track_idx,
+                    parse_fast_track_all_events(events, track_idx as u16),
+                );
+            });
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        for (track_idx, events) in tracks.into_iter().enumerate() {
+            track_handler(
+                track_idx,
+                parse_fast_track_all_events(events, track_idx as u16),
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// 逐轨并行提取全部事件，并按**轨序**收集回调产物（无锁）。
+///
+/// rayon 的有序收集保证 `results[i]` 一定来自 `track_idx == i`，
+/// 即「每轨独立槽位 + 按轨序轻量归并」的零锁实现；调用方可在回调内完成
+/// 排序 / 结构转换 / 文本复制等逐轨工作，互不阻塞。
+///
+/// 与流式回调 API 的取舍：本 API 会在解析结束前保留全部 `T`（内存 = 调用方
+/// 本身的产物大小），适合结果本来就要整体保留的消费者；需要逐轨释放时用
+/// [`extract_all_events_per_track_parallel_from_bytes`]。
+///
+/// 关闭 `parallel` 特性时按轨序顺序执行，返回值与并行构建完全一致。
+#[cfg(feature = "alloc")]
+pub fn extract_all_events_per_track_collect_from_bytes<F, T>(
+    bytes: &[u8],
+    track_handler: F,
+) -> crate::Result<Vec<T>>
+where
+    F: for<'a> Fn(usize, TrackAllEvents<'a>) -> T + Sync,
+    T: Send,
+{
+    let data = crate::ump::preprocess_smf(bytes);
+    let (_header, tracks_count, _division, raw) = fast_midi::parse_header(&data)?;
+    let tracks = fast_midi::iter_tracks_from_data(raw, tracks_count);
+
+    #[cfg(feature = "parallel")]
+    {
+        use rayon::prelude::*;
+        let handler = &track_handler;
+        // `IndexedParallelIterator::collect` 按索引保序：results[i] ← track_idx == i。
+        let results: Vec<T> = tracks
+            .into_par_iter()
+            .enumerate()
+            .map(|(track_idx, events)| {
+                handler(
+                    track_idx,
+                    parse_fast_track_all_events(events, track_idx as u16),
+                )
+            })
+            .collect();
+        Ok(results)
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        let results: Vec<T> = tracks
+            .into_iter()
+            .enumerate()
+            .map(|(track_idx, events)| {
+                track_handler(
+                    track_idx,
+                    parse_fast_track_all_events(events, track_idx as u16),
+                )
+            })
+            .collect();
+        Ok(results)
+    }
 }
 
 /// Parse all events (notes, tempo, signatures, controls, lyrics, markers,
