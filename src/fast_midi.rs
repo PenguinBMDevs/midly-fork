@@ -86,6 +86,12 @@ impl<'a> TrackIter<'a> {
         self.data.len().saturating_sub(self.offset)
     }
 
+    /// 轨道原始字节长度（音符容量预估用；**不是**事件数）。
+    #[inline]
+    pub(crate) fn data_len(&self) -> usize {
+        self.data.len()
+    }
+
     #[inline(always)]
     pub(crate) fn next_event(&mut self) -> Option<(u32, MidiEvent<'a>)> {
         let len = self.data.len();
