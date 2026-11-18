@@ -209,9 +209,11 @@ pub fn accumulate_track(track: &[TrackEvent], _idx: usize) -> RefTrack {
     }
 
     // 未闭合音符：在最后一个事件 tick 收尾，channel × key 升序，释放力度 0。
+    let mut has_unclosed_notes = false;
     for (ch, row) in active.iter_mut().enumerate() {
         for (key, slot) in row.iter_mut().enumerate() {
             if let Some((start, vel)) = slot.take() {
+                has_unclosed_notes = true;
                 out.notes.push(RefNote {
                     start_tick: start,
                     end_tick: tick,
@@ -228,6 +230,7 @@ pub fn accumulate_track(track: &[TrackEvent], _idx: usize) -> RefTrack {
         physical_end_tick: tick,
         content_end_tick,
         has_events_after_eot,
+        has_unclosed_notes,
     };
     out
 }

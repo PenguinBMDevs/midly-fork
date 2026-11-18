@@ -170,7 +170,24 @@ fn test_eot_closes_unclosed_note() {
     assert_eq!(snaps[0].timing.eot_tick, Some(480));
     assert_eq!(snaps[0].timing.physical_end_tick, 480);
     assert!(!snaps[0].timing.has_events_after_eot);
+    assert!(
+        snaps[0].timing.has_unclosed_notes,
+        "NoteOn 后没有 NoteOff：必须标记悬挂音符"
+    );
     assert!(snaps[0].timing.is_strict_clean());
+}
+
+/// 悬挂音符诊断的反例：正常 NoteOff 收尾的轨不得被标记。
+#[test]
+fn test_closed_note_is_not_flagged_as_unclosed() {
+    let mut t = TrackBuilder::new();
+    t.note_on(0, 0, 60, 100).note_off(120, 0, 60, 0).eot(120);
+    let snaps = run(&smf(vec![t]));
+    assert_eq!(snaps[0].notes, vec![(0, 120, 60, 100, 0)]);
+    assert!(
+        !snaps[0].timing.has_unclosed_notes,
+        "正常收尾的轨不得标记悬挂音符"
+    );
 }
 
 /// 2. NoteOn → NoteOff → 超晚 EOT：音符长度不被拉长，声明范围与内容范围分离。

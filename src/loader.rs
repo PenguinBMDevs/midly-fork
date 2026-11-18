@@ -667,10 +667,12 @@ impl NoteAccumulator {
         }
     }
 
-    fn finish(mut self) -> (Vec<PackedNote>, Vec<(u32, f32)>) {
+    fn finish(mut self) -> (Vec<PackedNote>, Vec<(u32, f32)>, bool) {
+        let mut has_unclosed = false;
         for ch in 0..16 {
             for key in 0..256 {
                 if let Some((start_tick, velocity)) = self.active_notes[ch][key].take() {
+                    has_unclosed = true;
                     self.notes.push(PackedNote::new(
                         start_tick,
                         self.current_tick,
@@ -682,7 +684,7 @@ impl NoteAccumulator {
                 }
             }
         }
-        (self.notes, self.tempo_changes)
+        (self.notes, self.tempo_changes, has_unclosed)
     }
 }
 
@@ -917,7 +919,8 @@ fn parse_track_notes(track: &[TrackEvent], track_idx: u16) -> (Vec<PackedNote>, 
         }
     }
 
-    acc.finish()
+    let (notes, tempo_changes, _has_unclosed) = acc.finish();
+    (notes, tempo_changes)
 }
 
 #[cfg(feature = "alloc")]
@@ -971,7 +974,7 @@ fn parse_track_notes_and_control_events(
         }
     }
 
-    let (notes, tempo_changes) = note_acc.finish();
+    let (notes, tempo_changes, _) = note_acc.finish();
     let control_events = ctrl_acc.finish();
     (notes, tempo_changes, control_events)
 }
@@ -1329,6 +1332,12 @@ pub struct TrackTiming {
     /// 是否在首个 EOT 后仍发现事件（兼容模式保留这些事件，仅作诊断；
     /// 重复 EOT 也计入）。
     pub has_events_after_eot: bool,
+    /// 轨道结束时仍有未收到 NoteOff 的音符（悬挂音符，解析器已按
+    /// [`physical_end_tick`](Self::physical_end_tick) 自动收尾）。
+    ///
+    /// 常见于截断文件或忘记 NoteOff 的导出器。解析器保持兼容模式（音符以物理末尾
+    /// 收尾），调用方可用本标记决定是否提示用户或裁剪。
+    pub has_unclosed_notes: bool,
 }
 
 impl TrackTiming {
@@ -1761,7 +1770,7 @@ fn parse_fast_track_all_events(mut events: FastTrackIter, track_idx: u16) -> Tra
     };
 
     let physical_end_tick = note_acc.current_tick;
-    let (notes, tempo_changes) = note_acc.finish();
+    let (notes, tempo_changes, has_unclosed_notes) = note_acc.finish();
     let control_events = ctrl_acc.finish();
 
     TrackAllEvents {
@@ -1781,6 +1790,7 @@ fn parse_fast_track_all_events(mut events: FastTrackIter, track_idx: u16) -> Tra
             physical_end_tick,
             content_end_tick,
             has_events_after_eot,
+            has_unclosed_notes,
         },
     }
 }
@@ -1822,7 +1832,8 @@ fn parse_fast_track_notes(
         }
     }
 
-    acc.finish()
+    let (notes, tempo_changes, _has_unclosed) = acc.finish();
+    (notes, tempo_changes)
 }
 
 /// Parse events to notes AND control events (CC / PC / PB) without allocating intermediate TrackEvent structs.
@@ -1881,7 +1892,7 @@ fn parse_fast_track_notes_and_control_events(
         }
     }
 
-    let (notes, tempo_changes) = note_acc.finish();
+    let (notes, tempo_changes, _) = note_acc.finish();
     let control_events = ctrl_acc.finish();
     (notes, tempo_changes, control_events)
 }
@@ -1961,7 +1972,7 @@ fn parse_fast_track_notes_control_and_time_signature_events(
         }
     }
 
-    let (notes, tempo_changes) = note_acc.finish();
+    let (notes, tempo_changes, _) = note_acc.finish();
     let control_events = ctrl_acc.finish();
     (notes, tempo_changes, control_events, time_signatures)
 }
