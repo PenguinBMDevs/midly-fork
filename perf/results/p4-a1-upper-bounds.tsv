@@ -28,3 +28,9 @@ A2	peak-retain-all	StarT164M.mid	a2-capacity	-	-	peak=5689.1MB（-2.7%）
 A3	p5-ceiling	star164-largest-track-format0.mid	minimal-t8	85.10	86.61	1 轨 / 8,795,520 音符 → 101 Mevents/s
 A3	p5-ceiling	gen-single-giant.mid	minimal-t8	9.03	9.43	1 轨 / 1,000,000 音符 → 106 Mevents/s
 A3	p5-ceiling	Pi.mid	minimal-t8	5.93	6.97	30 轨 / 3,141,592 音符 → 445 Mevents/s
+A2-quiet	capacity-hint	StarT164M.mid	e0	431.13	473.10	安静窗口 load=3%
+A2-quiet	capacity-hint	StarT164M.mid	a2-capacity	282.51	334.00	-34.5%（四次区间不重叠）
+A2-quiet	capacity-hint	Pi.mid	e0	7.65	8.66	安静窗口
+A2-quiet	capacity-hint	Pi.mid	a2-capacity	4.97	5.78	-35.0%
+A2-quiet	capacity-hint	gen-single-giant.mid	e0	9.78	10.06	安静窗口
+A2-quiet	capacity-hint	gen-single-giant.mid	a2-capacity	8.28	8.54	-15.3%
