@@ -9,16 +9,49 @@
 
 use std::time::Instant;
 
-use midly::loader::{TrackAllEvents, extract_all_events_per_track_streaming_from_bytes};
+use midly::loader::{
+    PackedControlEvent, PackedNote, TrackAllEvents,
+    extract_all_events_per_track_collect_from_bytes,
+    extract_all_events_per_track_streaming_from_bytes,
+};
 
 use crate::sys;
+
+/// 回调形态。
+///
+/// - `Minimal`：只计数 ≈ 纯解析 + 派发；
+/// - `Realistic`：旧 `FnMut` 全局锁路径，复刻下游逐轨工作（排序 / 转换 / 文本复制 / 归并）；
+/// - `ParallelApi`：P3 无锁并行路径（`_collect_` API）——逐轨工作在工作线程内并行完成，
+///   仅最终按轨序归并串行。
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum CallbackKind {
+    Minimal,
+    Realistic,
+    ParallelApi,
+}
+
+impl CallbackKind {
+    /// TSV/日志标签。
+    pub fn label(self) -> &'static str {
+        match self {
+            CallbackKind::Minimal => "minimal",
+            CallbackKind::Realistic => "realistic",
+            CallbackKind::ParallelApi => "realistic-par",
+        }
+    }
+
+    /// 是否执行下游 realistic 工作负载（逐轨排序 / 产物保留 / 文本复制）。
+    pub fn realistic_work(self) -> bool {
+        self != CallbackKind::Minimal
+    }
+}
 
 /// 测量配置。
 pub struct BenchConfig {
     pub threads: usize,
     pub warmup: usize,
     pub runs: usize,
-    pub realistic: bool,
+    pub callback: CallbackKind,
     pub label: String,
 }
 
@@ -40,12 +73,26 @@ pub struct BenchReport {
     pub mb_per_s: f64,
     pub mevents_per_s: f64,
     pub callback_sum_median_ms: f64,
+    /// 最终串行归并耗时（仅 ParallelApi；旧路径为 0）。
+    pub merge_median_ms: f64,
     pub serial_fraction: f64,
     pub peak_ws_mb: f64,
     pub total_notes: u64,
     pub total_events: u64,
     pub tracks: usize,
     pub track_stats: Vec<TrackStat>,
+}
+
+/// P3 无锁并行路径的逐轨产物：逐轨工作在回调内完成，归并只做 extend。
+struct ParTrackOutput {
+    notes: Vec<PackedNote>,
+    control_events: Vec<PackedControlEvent>,
+    tempo_changes: Vec<(u32, f32)>,
+    /// 文本类（lyrics / markers / text_events / sys_ex）字节副本，归并时拼接到全局 arena。
+    text: Vec<u8>,
+    /// 与 `Sink::handle` 同口径的事件计数。
+    events: usize,
+    callback_ms: f64,
 }
 
 /// 下游模拟 sink：minimal 只计数；realistic 复刻 midi-model 回调工作。
@@ -104,6 +151,65 @@ impl Sink {
             callback_ms: t0.elapsed().as_secs_f64() * 1000.0,
         });
     }
+
+    /// 无锁并行路径的归并：只做按轨序的 extend / 拼接，逐轨重活已在回调内并行完成。
+    fn merge_par(&mut self, idx: usize, slot: ParTrackOutput) {
+        let n = slot.notes.len();
+        self.events += slot.events as u64;
+        self.notes += n as u64;
+        self.tracks = self.tracks.max(idx + 1);
+        self.per_track_notes.push(slot.notes);
+        self.global_controls.extend(slot.control_events);
+        self.global_tempo.extend(slot.tempo_changes);
+        self.text_arena.extend_from_slice(&slot.text);
+        self.track_stats.push(TrackStat {
+            track_idx: idx,
+            notes: n,
+            callback_ms: slot.callback_ms,
+        });
+    }
+}
+
+/// P3 无锁并行路径的单轮回调：逐轨排序 / 产物保留 / 文本复制全部在工作线程内完成。
+fn parallel_track_output(mut ev: TrackAllEvents) -> ParTrackOutput {
+    let t0 = Instant::now();
+    let mut events = ev.notes.len()
+        + ev.control_events.len()
+        + ev.tempo_changes.len()
+        + ev.time_signatures.len()
+        + ev.key_signatures.len()
+        + ev.lyrics.len()
+        + ev.markers.len()
+        + ev.sys_ex.len();
+    #[cfg(feature = "text-events")]
+    {
+        events += ev.text_events.len();
+    }
+
+    // 与 realistic 路径完全相同的下游工作量（保持 A/B 只差「锁」这一个变量）：
+    // 稳定排序 + 每轨产物保留 + 文本复制。归并（extend / arena 拼接）留到锁外串行阶段。
+    ev.notes.sort_by_key(|n| n.start_tick);
+    let notes = ev.notes.clone();
+    let mut text = Vec::new();
+    for t in ev.lyrics.iter().chain(ev.markers.iter()) {
+        text.extend_from_slice(t.text);
+    }
+    #[cfg(feature = "text-events")]
+    for t in &ev.text_events {
+        text.extend_from_slice(t.text);
+    }
+    for s in &ev.sys_ex {
+        text.extend_from_slice(s.data);
+    }
+
+    ParTrackOutput {
+        notes,
+        control_events: ev.control_events,
+        tempo_changes: ev.tempo_changes,
+        text,
+        events,
+        callback_ms: t0.elapsed().as_secs_f64() * 1000.0,
+    }
 }
 
 fn median(v: &mut [f64]) -> f64 {
@@ -124,6 +230,7 @@ pub fn run_bench(bytes: &[u8], file_size: u64, cfg: &BenchConfig) -> Result<Benc
     let mut walls: Vec<f64> = Vec::new();
     let mut cpus: Vec<f64> = Vec::new();
     let mut cb_sums: Vec<f64> = Vec::new();
+    let mut merges: Vec<f64> = Vec::new();
     let mut last = Sink::default();
 
     // 一个加载任务一个池（指导书 P2.5-A），整个 bench 复用，不逐轮建池。
@@ -140,26 +247,51 @@ pub fn run_bench(bytes: &[u8], file_size: u64, cfg: &BenchConfig) -> Result<Benc
     let total_rounds = cfg.warmup + cfg.runs;
     for round in 0..total_rounds {
         let mut sink = Sink::default();
+        let mut merge_ms = 0.0f64;
         let cpu0 = sys::cpu_time_secs();
         let t0 = Instant::now();
-        // serial 构建需要 mut（FnMut 捕获 sink）；parallel 构建 install 按值消费，豁免 unused_mut。
-        #[cfg_attr(feature = "parallel", allow(unused_mut))]
-        let mut invoke = || {
-            extract_all_events_per_track_streaming_from_bytes(bytes, |idx, ev| {
-                sink.handle(idx, ev, cfg.realistic);
-            })
-        };
-        #[cfg(feature = "parallel")]
-        let result = pool.install(invoke);
-        #[cfg(not(feature = "parallel"))]
-        let result = invoke();
+        match cfg.callback {
+            CallbackKind::Minimal | CallbackKind::Realistic => {
+                let realistic = cfg.callback.realistic_work();
+                // serial 构建需要 mut（FnMut 捕获 sink）；parallel 构建 install 按值消费，豁免 unused_mut。
+                #[cfg_attr(feature = "parallel", allow(unused_mut))]
+                let mut invoke = || {
+                    extract_all_events_per_track_streaming_from_bytes(bytes, |idx, ev| {
+                        sink.handle(idx, ev, realistic);
+                    })
+                };
+                #[cfg(feature = "parallel")]
+                let result = pool.install(invoke);
+                #[cfg(not(feature = "parallel"))]
+                let result = invoke();
+                result.map_err(|e| format!("解析失败: {e:?}"))?;
+            }
+            CallbackKind::ParallelApi => {
+                // 无锁并行：逐轨工作在回调内并行完成，只有下面的按轨序归并是串行的。
+                let collect = || {
+                    extract_all_events_per_track_collect_from_bytes(bytes, |_idx, ev| {
+                        parallel_track_output(ev)
+                    })
+                };
+                #[cfg(feature = "parallel")]
+                let slots = pool.install(collect);
+                #[cfg(not(feature = "parallel"))]
+                let slots = collect();
+                let slots = slots.map_err(|e| format!("解析失败: {e:?}"))?;
+                let merge0 = Instant::now();
+                for (idx, slot) in slots.into_iter().enumerate() {
+                    sink.merge_par(idx, slot);
+                }
+                merge_ms = merge0.elapsed().as_secs_f64() * 1000.0;
+            }
+        }
         let wall_ms = t0.elapsed().as_secs_f64() * 1000.0;
         let cpu_ms = (sys::cpu_time_secs() - cpu0) * 1000.0;
-        result.map_err(|e| format!("解析失败: {e:?}"))?;
         if round >= cfg.warmup {
             walls.push(wall_ms);
             cpus.push(cpu_ms);
             cb_sums.push(sink.track_stats.iter().map(|t| t.callback_ms).sum());
+            merges.push(merge_ms);
             last = sink;
         }
     }
@@ -167,12 +299,25 @@ pub fn run_bench(bytes: &[u8], file_size: u64, cfg: &BenchConfig) -> Result<Benc
     let wall_med = median(&mut walls.clone());
     let cpu_med = median(&mut cpus.clone());
     let cb_med = median(&mut cb_sums.clone());
+    let merge_med = median(&mut merges.clone());
     let (peak, _) = sys::working_set();
     let file_mb = file_size as f64 / (1024.0 * 1024.0);
     let mode = if cfg!(feature = "parallel") {
         "parallel"
     } else {
         "serial"
+    };
+    // 串行占比口径：
+    // - 旧路径 = 全局锁内回调总和 / 墙钟（上界）；
+    // - ParallelApi = 最终归并 / 墙钟（回调总和是并行工作量，除以墙钟会 >1，无意义）。
+    let serial_fraction = if wall_med > 0.0 {
+        if cfg.callback == CallbackKind::ParallelApi {
+            merge_med / wall_med
+        } else {
+            cb_med / wall_med
+        }
+    } else {
+        0.0
     };
 
     Ok(BenchReport {
@@ -185,11 +330,8 @@ pub fn run_bench(bytes: &[u8], file_size: u64, cfg: &BenchConfig) -> Result<Benc
         mb_per_s: file_mb / (wall_med / 1000.0),
         mevents_per_s: last.events as f64 / 1e6 / (wall_med / 1000.0),
         callback_sum_median_ms: cb_med,
-        serial_fraction: if wall_med > 0.0 {
-            cb_med / wall_med
-        } else {
-            0.0
-        },
+        merge_median_ms: merge_med,
+        serial_fraction,
         peak_ws_mb: peak as f64 / (1024.0 * 1024.0),
         total_notes: last.notes,
         total_events: last.events,
@@ -199,8 +341,10 @@ pub fn run_bench(bytes: &[u8], file_size: u64, cfg: &BenchConfig) -> Result<Benc
 }
 
 /// TSV 表头（原始数据归档用）。
+///
+/// v2（P3 起）：末尾追加 `merge_median_ms`（旧路径恒为 0）。
 pub fn tsv_header() -> &'static str {
-    "label\tfile\tmode\tcallback\tthreads\twarmup\truns\twall_median_ms\twall_min_ms\twall_max_ms\tcpu_median_ms\tmb_per_s\tmevents_per_s\tcallback_sum_median_ms\tserial_fraction\tpeak_ws_mb\tnotes\tevents\ttracks\tfile_mb"
+    "label\tfile\tmode\tcallback\tthreads\twarmup\truns\twall_median_ms\twall_min_ms\twall_max_ms\tcpu_median_ms\tmb_per_s\tmevents_per_s\tcallback_sum_median_ms\tserial_fraction\tpeak_ws_mb\tnotes\tevents\ttracks\tfile_mb\tmerge_median_ms"
 }
 
 /// 单行 TSV。
@@ -212,13 +356,9 @@ pub fn tsv_row(
     file_mb: f64,
 ) -> String {
     format!(
-        "{label}\t{file}\t{}\t{}\t{}\t{}\t{}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{:.2}\t{:.3}\t{:.3}\t{:.4}\t{:.2}\t{}\t{}\t{}\t{:.3}",
+        "{label}\t{file}\t{}\t{}\t{}\t{}\t{}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\t{:.2}\t{:.3}\t{:.3}\t{:.4}\t{:.2}\t{}\t{}\t{}\t{:.3}\t{:.3}",
         r.mode,
-        if cfg.realistic {
-            "realistic"
-        } else {
-            "minimal"
-        },
+        cfg.callback.label(),
         r.threads_actual,
         cfg.warmup,
         cfg.runs,
@@ -235,5 +375,6 @@ pub fn tsv_row(
         r.total_events,
         r.tracks,
         file_mb,
+        r.merge_median_ms,
     )
 }

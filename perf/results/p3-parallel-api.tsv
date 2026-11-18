@@ -1,0 +1,26 @@
+label	file	mode	callback	threads	warmup	runs	wall_median_ms	wall_min_ms	wall_max_ms	cpu_median_ms	mb_per_s	mevents_per_s	callback_sum_median_ms	serial_fraction	peak_ws_mb	notes	events	tracks	file_mb	merge_median_ms
+fork-0.6.5	F:\midly-fork\test-asset\Pi.mid	parallel	realistic	8	2	5	18.435	17.335	21.100	46.875	1305.78	170.474	14.209	0.7708	118.61	3141592	3142724	30	24.072	0.000
+fork-0.6.5	F:\midly-fork\test-asset\Pi.mid	parallel	realistic-par	8	2	5	12.040	11.058	13.680	62.500	1999.35	261.021	16.435	0.0022	121.71	3141592	3142724	30	24.072	0.027
+fork-0.6.5	F:\midly-fork\test-asset\Pi.mid	parallel	realistic	8	2	5	17.298	16.842	19.220	62.500	1391.64	181.683	13.268	0.7670	119.05	3141592	3142724	30	24.072	0.000
+fork-0.6.5	F:\midly-fork\test-asset\Pi.mid	parallel	realistic-par	8	2	5	13.302	11.346	15.064	109.375	1809.66	236.258	15.944	0.0021	120.70	3141592	3142724	30	24.072	0.028
+fork-0.6.5	F:\midly-fork\test-asset\Pi.mid	parallel	minimal	8	2	5	9.363	8.401	11.100	62.500	2571.09	335.664	0.002	0.0002	46.09	3141592	3142724	30	24.072	0.000
+fork-0.6.5	F:\midly-fork\test-asset\Pi.mid	parallel	realistic-par	1	2	5	45.616	44.321	47.636	46.875	527.72	68.896	10.400	0.0005	114.67	3141592	3142724	30	24.072	0.025
+fork-0.6.5	F:\midly-fork\test-asset\Pi.mid	parallel	realistic-par	2	2	5	27.131	25.625	30.763	62.500	887.27	115.836	11.436	0.0008	115.07	3141592	3142724	30	24.072	0.021
+fork-0.6.5	F:\midly-fork\test-asset\Pi.mid	parallel	realistic-par	4	2	5	15.523	14.747	17.916	62.500	1550.72	202.452	12.264	0.0019	117.99	3141592	3142724	30	24.072	0.029
+fork-0.6.5	F:\midly-fork\test-asset\Pi.mid	parallel	realistic-par	16	2	5	10.987	10.578	12.212	93.750	2190.96	286.038	26.170	0.0031	123.54	3141592	3142724	30	24.072	0.034
+fork-0.6.5	F:\midly-fork\test-asset\熠星始芒：StarT audio 210k v1.1fix.mid	parallel	realistic	8	2	5	3.108	2.870	3.440	0.000	802.46	138.085	1.911	0.6149	21.67	210937	429183	40	2.494	0.000
+fork-0.6.5	F:\midly-fork\test-asset\熠星始芒：StarT audio 210k v1.1fix.mid	parallel	realistic-par	8	2	5	2.797	2.654	3.094	0.000	891.81	153.461	1.352	0.2129	21.27	210937	429183	40	2.494	0.595
+fork-0.6.5	F:\midly-fork\test-asset\Clementi.mid	parallel	realistic	8	2	5	0.028	0.024	0.095	0.000	138.35	23.556	0.002	0.0528	4.79	666	669	3	0.004	0.000
+fork-0.6.5	F:\midly-fork\test-asset\Clementi.mid	parallel	realistic-par	8	2	5	0.071	0.029	0.085	0.000	55.73	9.489	0.003	0.0156	4.93	666	669	3	0.004	0.001
+fork-0.6.5-sm	F:\midly-fork\test-asset\Clementi.mid	parallel	realistic	8	5	20	0.029	0.019	0.064	0.000	134.56	22.911	0.002	0.0514	5.16	666	669	3	0.004	0.000
+fork-0.6.5-sm	F:\midly-fork\test-asset\Clementi.mid	parallel	realistic-par	8	5	20	0.035	0.025	0.081	0.000	113.07	19.252	0.001	0.0245	5.12	666	669	3	0.004	0.001
+fork-0.6.5-sm	F:\midly-fork\test-asset\Clementi.mid	parallel	realistic	8	5	20	0.029	0.023	0.093	0.000	136.67	23.270	0.001	0.0504	5.15	666	669	3	0.004	0.000
+fork-0.6.5-sm	F:\midly-fork\test-asset\Clementi.mid	parallel	realistic-par	8	5	20	0.036	0.025	0.090	0.000	110.21	18.766	0.001	0.0281	5.16	666	669	3	0.004	0.001
+fork-0.6.5-sm	F:\midly-fork\test-asset\Clementi.mid	parallel	realistic	8	5	20	0.029	0.021	0.060	0.000	135.96	23.149	0.001	0.0450	5.02	666	669	3	0.004	0.000
+fork-0.6.5-sm	F:\midly-fork\test-asset\Clementi.mid	parallel	realistic-par	8	5	20	0.030	0.019	0.079	0.000	128.82	21.934	0.001	0.0328	5.14	666	669	3	0.004	0.001
+fork-0.6.5	F:\midly-fork\test-asset\Pi.mid	serial	realistic	0	2	5	45.427	44.795	51.138	46.875	529.91	69.181	10.249	0.2256	114.46	3141592	3142724	30	24.072	0.000
+fork-0.6.5	F:\midly-fork\test-asset\Pi.mid	serial	realistic-par	0	2	5	47.064	45.273	56.624	46.875	511.48	66.776	10.433	0.0003	114.48	3141592	3142724	30	24.072	0.014
+fork-0.6.5	F:\midly-fork\test-asset\熠星始芒：StarT audio 210k v1.1fix.mid	serial	realistic	0	2	5	5.507	5.117	6.034	0.000	452.92	77.938	1.461	0.2653	19.16	210937	429183	40	2.494	0.000
+fork-0.6.5	F:\midly-fork\test-asset\熠星始芒：StarT audio 210k v1.1fix.mid	serial	realistic-par	0	2	5	5.342	5.053	5.533	0.000	466.90	80.344	0.888	0.1040	20.03	210937	429183	40	2.494	0.556
+fork-0.6.5	F:\midly-fork\test-asset\Clementi.mid	serial	realistic	0	5	20	0.022	0.016	0.026	0.000	175.80	29.933	0.001	0.0470	3.97	666	669	3	0.004	0.000
+fork-0.6.5	F:\midly-fork\test-asset\Clementi.mid	serial	realistic-par	0	5	20	0.017	0.016	0.023	0.000	238.13	40.545	0.001	0.0212	3.98	666	669	3	0.004	0.000

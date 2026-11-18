@@ -3,7 +3,7 @@
 //! 用法：
 //!   midly-perf characterize <file.mid>
 //!   midly-perf bench <file.mid> [--threads N] [--warmup W] [--runs R]
-//!                  [--callback minimal|realistic] [--label L] [--out results.tsv]
+//!                  [--callback minimal|realistic|realistic-par] [--label L] [--out results.tsv]
 //!
 //! 版本切换（registry 依赖 + patch）：
 //!   默认 patch 指向 fork（0.6.5+修复）；基线对照：
@@ -133,7 +133,7 @@ fn run_bench_cli(path: &str, bytes: &[u8], file_mb: f64, opts: &[String]) -> Exi
         threads: 0,
         warmup: 2,
         runs: 5,
-        realistic: false,
+        callback: bench::CallbackKind::Minimal,
         label: "fork-0.6.5".to_string(),
     };
     let mut out: Option<String> = None;
@@ -145,7 +145,17 @@ fn run_bench_cli(path: &str, bytes: &[u8], file_mb: f64, opts: &[String]) -> Exi
             "--threads" => cfg.threads = val.parse().unwrap_or(0),
             "--warmup" => cfg.warmup = val.parse().unwrap_or(2),
             "--runs" => cfg.runs = val.parse().unwrap_or(5),
-            "--callback" => cfg.realistic = val == "realistic",
+            "--callback" => {
+                cfg.callback = match val {
+                    "minimal" => bench::CallbackKind::Minimal,
+                    "realistic" => bench::CallbackKind::Realistic,
+                    "realistic-par" => bench::CallbackKind::ParallelApi,
+                    other => {
+                        eprintln!("未知 callback: {other}（可选 minimal|realistic|realistic-par）");
+                        return ExitCode::FAILURE;
+                    }
+                }
+            }
             "--label" => cfg.label = val.to_string(),
             "--out" => out = Some(val.to_string()),
             _ => {
@@ -159,15 +169,11 @@ fn run_bench_cli(path: &str, bytes: &[u8], file_mb: f64, opts: &[String]) -> Exi
     match bench::run_bench(bytes, bytes.len() as u64, &cfg) {
         Ok(r) => {
             eprintln!(
-                "[bench] {} mode={} threads={} callback={} | wall median={:.2}ms min={:.2} max={:.2} | cpu={:.2}ms | {:.1} MB/s {:.3} Mevents/s | 回调串行占比={:.1}% | peak={:.1}MB | notes={} events={} tracks={}",
+                "[bench] {} mode={} threads={} callback={} | wall median={:.2}ms min={:.2} max={:.2} | cpu={:.2}ms | {:.1} MB/s {:.3} Mevents/s | 串行段占比={:.1}% | peak={:.1}MB | notes={} events={} tracks={}",
                 path,
                 r.mode,
                 r.threads_actual,
-                if cfg.realistic {
-                    "realistic"
-                } else {
-                    "minimal"
-                },
+                cfg.callback.label(),
                 r.wall_median_ms,
                 r.wall_min_ms,
                 r.wall_max_ms,
@@ -180,6 +186,15 @@ fn run_bench_cli(path: &str, bytes: &[u8], file_mb: f64, opts: &[String]) -> Exi
                 r.total_events,
                 r.tracks,
             );
+            // P3：并行回调总和是「并行工作量」，最终归并才是真正的串行段。
+            if cfg.callback == bench::CallbackKind::ParallelApi {
+                eprintln!(
+                    "[p3] 并行回调总和={:.3}ms（/墙钟={:.2}×）| 最终归并={:.3}ms",
+                    r.callback_sum_median_ms,
+                    r.callback_sum_median_ms / r.wall_median_ms.max(f64::EPSILON),
+                    r.merge_median_ms,
+                );
+            }
             // 每轨回调耗时分布（指导书 P2：每轨耗时分布；按轨记录，非每事件计时）。
             if !r.track_stats.is_empty() {
                 let mut holds: Vec<f64> = r.track_stats.iter().map(|t| t.callback_ms).collect();
