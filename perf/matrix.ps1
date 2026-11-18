@@ -190,12 +190,15 @@ if ($Labels.Count -eq 0) {
 $Errors = @()
 $Total = $Labels.Count * $MaterialPaths.Count * $Threads.Count
 $Done = 0
-foreach ($label in $Labels) {
-    $exe = Join-Path $BinDir "$label.exe"
-    if (-not (Test-Path $exe)) { throw "缺少二进制: $exe（去掉 -NoBuild 重新构建）" }
-    foreach ($mat in $MaterialPaths) {
-        $matName = Split-Path $mat -Leaf
-        foreach ($t in $Threads) {
+# 交错执行：同一 (素材, 线程) 下各版本背靠背跑，抵消「越跑越快/越跑越慢」的机器漂移。
+# serial 构建只会有一个有效线程数（threads 字段固定 0），同一素材只跑一次。
+foreach ($mat in $MaterialPaths) {
+    $matName = Split-Path $mat -Leaf
+    foreach ($t in $Threads) {
+        foreach ($label in $Labels) {
+            if ($label -like '*-serial' -and $t -ne $Threads[0]) { continue }
+            $exe = Join-Path $BinDir "$label.exe"
+            if (-not (Test-Path $exe)) { throw "缺少二进制: $exe（去掉 -NoBuild 重新构建）" }
             $Done++
             Write-Host ("[matrix] {0}/{1} {2} | {3} | t={4}" -f $Done, $Total, $label, $matName, $t)
             $benchArgs = @('bench', $mat, '--threads', $t, '--callback', $Callback,

@@ -1,0 +1,10 @@
+﻿timestamp=20261118-201943
+host=ZWPC-ACER os=Microsoft Windows 11 家庭版 中文版
+cpu=AMD Ryzen 9 7940H  w/ Radeon 780M Graphics      logical=16
+load_at_start=20%
+repo=F:\midly-fork commit=8fe44a2
+rustc=rustc 1.98.1 (48a229cea 2026-09-01)
+callback=minimal warmup=3 runs=15
+versions=fork,0.6.5,0.6.4,0.6.3 modes=parallel,serial threads=1,8,16 materials=pi,clementi,control,sysex,text
+out=F:\midly-fork\perf\results\matrix-20261118-201943.tsv
+labels=fork-parallel,fork-serial,0.6.5-parallel,0.6.4-parallel,0.6.3-parallel
