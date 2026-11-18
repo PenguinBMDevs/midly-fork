@@ -386,6 +386,92 @@ fn test_oracle_synthetic_all() {
     }
 }
 
+/// Smf 参考 API 与快路径的控制事件编码对拍（P1 发现的 PB 编码 bug 回归门）。
+///
+/// 背景：`PitchBend::as_int()` 返回 [-8192,8191] 偏差，而 PackedControlEvent
+/// 文档编码为原始 14-bit（0..16383）。Smf 路径 `parse_track_notes_and_control_events`
+/// 若误用 `bend.as_int() as u16`，负偏差会 wrap 再被 &0x3FFF 掩码，与快路径分裂。
+#[test]
+fn test_oracle_smf_api_pb_parity() {
+    let bytes = smf(
+        1,
+        480,
+        &[
+            track(&seq(&[
+                ev(0, &[0xE0, 0, 0]),        // raw 0（下满偏）
+                ev(10, &[0xE0, 0, 64]),      // raw 8192（中心）
+                ev(10, &[0xE0, 0x7F, 0x7F]), // raw 16383（上满偏）
+                ev(10, &[0xE0, 100, 0]),     // raw 100（低于中心 → 负偏差陷阱）
+                ev(10, &[0xE1, 0x00, 0x40]), // ch1 raw 8192
+                ev(10, &[0xB0, 7, 100]),
+                ev(10, &[0x90, 60, 100]),
+                ev(100, &[0x80, 60, 0]),
+                eot(0),
+            ])),
+            track(&seq(&[
+                ev(0, &[0xE2, 0x34, 0x12]), // ch2 任意值
+                ev(10, &[0xC0, 5]),
+                eot(0),
+            ])),
+        ],
+    );
+
+    let smf = midly::Smf::parse(&bytes).expect("合成文件 Smf 解析必须成功");
+    let (notes_s, _tempo_s, ctrl_s) = midly::loader::extract_notes_and_control_events(&smf);
+    let (notes_f, _tempo_f, ctrl_f) =
+        midly::loader::extract_notes_and_control_events_from_bytes(&bytes)
+            .expect("合成文件快路径解析必须成功");
+
+    // 音符全字段对拍（两侧同用 NoteAccumulator，应逐条一致）。
+    assert_eq!(notes_s.len(), notes_f.len(), "Smf/快路径音符数量必须一致");
+    for (i, (a, b)) in notes_s.iter().zip(notes_f.iter()).enumerate() {
+        let (a, b) = (*a, *b);
+        assert_eq!(
+            (
+                a.start_tick,
+                a.end_tick,
+                a.key,
+                a.velocity,
+                a.release_velocity,
+                a.channel,
+                a.track
+            ),
+            (
+                b.start_tick,
+                b.end_tick,
+                b.key,
+                b.velocity,
+                b.release_velocity,
+                b.channel,
+                b.track
+            ),
+            "音符#{i} Smf/快路径不一致"
+        );
+    }
+
+    // 控制事件按 (track,tick,kind,channel,param) 排序后对拍（归并顺序不敏感）。
+    let mut cs: Vec<_> = ctrl_s
+        .iter()
+        .map(|c| {
+            let c = *c;
+            (c.track, c.tick, c.kind, c.channel, c.param)
+        })
+        .collect();
+    let mut cf: Vec<_> = ctrl_f
+        .iter()
+        .map(|c| {
+            let c = *c;
+            (c.track, c.tick, c.kind, c.channel, c.param)
+        })
+        .collect();
+    cs.sort_unstable();
+    cf.sort_unstable();
+    assert_eq!(
+        cs, cf,
+        "Smf 路径与快路径控制事件必须一致（PB 为原始 14-bit 编码）"
+    );
+}
+
 /// 黄金断言：重触发语义的精确音符表（不只依赖参考链一致性，
 /// 直接锁定文档语义，防止参考实现与快路径共同漂移）。
 #[test]

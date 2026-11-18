@@ -916,7 +916,11 @@ fn parse_track_notes_and_control_events(
                         ctrl_acc.program_change(ch, program.as_int());
                     }
                     MidiMessage::PitchBend { bend } => {
-                        let bend_u16 = bend.as_int() as u16;
+                        // PitchBend::as_int() 是 [-8192,8191] 偏差语义；
+                        // PackedControlEvent 编码契约是原始 14-bit（0..16383），
+                        // 与快路径 (msb<<7)|lsb 一致。误用 as_int() 会让负偏差
+                        // wrap 成 u16 再被 &0x3FFF 掩码，造成 Smf/快路径分裂。
+                        let bend_u16 = bend.0.as_int();
                         ctrl_acc.pitch_bend(ch, bend_u16);
                     }
                     MidiMessage::Aftertouch { key, vel } => {
