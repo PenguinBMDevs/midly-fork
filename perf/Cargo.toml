@@ -1,0 +1,30 @@
+[package]
+name = "midly-perf"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "lumino-midly P2 性能基线测量台（指导书 docs/research/lumino-midly-performance-guide.md）"
+
+[dependencies]
+# registry 依赖 + [patch] 指向父目录 fork；基线对照通过 --config 覆盖 patch path：
+#   cargo run --release --config "patch.crates-io.lumino-midly.path='F:/midly-baselines/lumino-midly-0.6.3'"
+# 别名 midly（package = lumino-midly）：fork 的 [lib] name=midly 与基线默认 lib 名
+# lumino_midly 不同，显式别名保证跨版本 extern 名一致（与主仓约定相同）。
+midly = { version = "0.6", package = "lumino-midly", default-features = false, features = ["std", "alloc", "memmap"] }
+rayon = { version = "1", optional = true }
+
+[features]
+default = ["parallel", "text-events"]
+# 关闭 parallel = midly serial 路径（--no-default-features --features text-events）
+parallel = ["midly/parallel", "dep:rayon"]
+# 0.6.3 的 TrackAllEvents 无 text_events 字段（0.6.4 才加入）；
+# 对 0.6.3 基线跑分时关闭：--no-default-features --features parallel
+text-events = []
+
+[patch.crates-io]
+lumino-midly = { path = ".." }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

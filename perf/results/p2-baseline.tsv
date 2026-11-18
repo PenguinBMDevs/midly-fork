@@ -1,0 +1,21 @@
+label	file	mode	callback	threads	warmup	runs	wall_median_ms	wall_min_ms	wall_max_ms	cpu_median_ms	mb_per_s	mevents_per_s	callback_sum_median_ms	serial_fraction	peak_ws_mb	notes	events	tracks	file_mb
+fork-0.6.5	F:\midly-fork\test-asset\Pi.mid	parallel	realistic	8	2	5	16.005	15.079	16.257	109.375	1504.07	196.361	12.781	0.7985	119.81	3141592	3142724	30	24.072
+fork-0.6.5	F:\midly-fork\test-asset\Pi.mid	parallel	realistic	1	2	5	45.374	42.733	46.570	46.875	530.53	69.263	9.929	0.2188	114.62	3141592	3142724	30	24.072
+fork-0.6.5	F:\midly-fork\test-asset\Pi.mid	parallel	realistic	2	2	5	26.017	25.594	30.287	46.875	925.26	120.796	10.692	0.4110	114.03	3141592	3142724	30	24.072
+fork-0.6.5	F:\midly-fork\test-asset\Pi.mid	parallel	realistic	4	2	5	19.078	18.249	26.019	62.500	1261.80	164.732	12.680	0.6646	117.16	3141592	3142724	30	24.072
+fork-0.6.5	F:\midly-fork\test-asset\Pi.mid	parallel	realistic	16	2	5	17.885	16.750	21.007	93.750	1345.93	175.715	13.990	0.7822	122.34	3141592	3142724	30	24.072
+fork-0.6.5	F:\midly-fork\test-asset\Pi.mid	parallel	minimal	8	2	5	10.726	10.014	11.392	125.000	2244.40	293.014	0.002	0.0002	46.93	3141592	3142724	30	24.072
+fork-0.6.5	F:\midly-fork\test-asset\Pi.mid	parallel	minimal	1	2	5	35.850	34.691	36.276	31.250	671.47	87.662	0.003	0.0001	36.59	3141592	3142724	30	24.072
+fork-0.6.5	F:\midly-fork\test-asset\Pi.mid	parallel	realistic	16	2	5	16.073	15.843	16.824	31.250	1497.68	195.527	12.707	0.7906	124.21	3141592	3142724	30	24.072
+fork-0.6.5	F:\midly-fork\test-asset\Pi.mid	parallel	minimal	16	2	5	8.327	7.848	8.339	0.000	2890.77	377.400	0.002	0.0003	56.92	3141592	3142724	30	24.072
+fork-0.6.5	F:\midly-fork\test-asset\熠星始芒：StarT audio 210k v1.1fix.mid	parallel	realistic	8	2	5	2.723	2.300	2.821	0.000	915.84	157.597	1.659	0.6091	22.05	210937	429183	40	2.494
+fork-0.6.5	F:\midly-fork\test-asset\熠星始芒：StarT audio 210k v1.1fix.mid	parallel	minimal	8	2	5	1.899	1.845	2.111	0.000	1313.10	225.957	0.001	0.0005	12.89	210937	429183	40	2.494
+fork-0.6.5	F:\midly-fork\test-asset\Clementi.mid	parallel	minimal	8	2	5	0.068	0.020	0.100	0.000	57.36	9.766	0.000	0.0015	4.93	666	669	3	0.004
+fork-0.6.5	F:\midly-fork\test-asset\Pi.mid	serial	realistic	0	2	5	46.058	43.561	46.973	46.875	522.65	68.234	10.432	0.2265	114.49	3141592	3142724	30	24.072
+fork-0.6.5	F:\midly-fork\test-asset\Pi.mid	serial	minimal	0	2	5	35.039	34.413	41.887	31.250	687.02	89.692	0.002	0.0001	36.45	3141592	3142724	30	24.072
+fork-0.6.5	F:\midly-fork\test-asset\熠星始芒：StarT audio 210k v1.1fix.mid	serial	realistic	0	2	5	5.989	5.600	7.452	0.000	416.41	71.656	1.690	0.2822	18.31	210937	429183	40	2.494
+fork-0.6.5	F:\midly-fork\test-asset\Clementi.mid	serial	minimal	0	2	5	0.015	0.015	0.019	0.000	256.81	43.725	0.000	0.0131	3.95	666	669	3	0.004
+base-0.6.4	F:\midly-fork\test-asset\Pi.mid	parallel	realistic	8	2	5	17.565	16.965	18.526	93.750	1370.46	178.919	13.639	0.7765	118.76	3141592	3142724	30	24.072
+base-0.6.4	F:\midly-fork\test-asset\Pi.mid	parallel	minimal	8	2	5	10.236	10.167	10.912	93.750	2351.69	307.021	0.002	0.0002	47.11	3141592	3142724	30	24.072
+base-0.6.3	F:\midly-fork\test-asset\Pi.mid	parallel	realistic	8	2	5	15.860	15.765	17.290	109.375	1517.77	198.150	12.663	0.7984	113.22	3141592	3142724	30	24.072
+base-0.6.3	F:\midly-fork\test-asset\Pi.mid	parallel	minimal	8	2	5	8.568	7.372	9.392	31.250	2809.73	366.819	0.002	0.0002	45.18	3141592	3142724	30	24.072
