@@ -126,6 +126,10 @@ if ($Missing) {
 }
 
 # ── 构建：每个 (版本, 模式) 一次，二进制缓存 ──────────────────────────────
+# 基线构建会改写 Cargo.lock（patch 源），先备份、构建后还原，保证默认构建仍指向 fork。
+$LockPath = Join-Path $Perf 'Cargo.lock'
+$LockBackup = Join-Path $env:TEMP "midly-perf-Cargo.lock.$Stamp.bak"
+if (Test-Path $LockPath) { Copy-Item $LockPath $LockBackup -Force }
 $Labels = @()
 foreach ($ver in $Versions) {
     foreach ($mode in $Modes) {
@@ -151,6 +155,11 @@ foreach ($ver in $Versions) {
     }
 }
 Add-Content -Path $MetaPath -Encoding utf8 -Value "labels=$($Labels -join ',')"
+if (Test-Path $LockBackup) {
+    Copy-Item $LockBackup $LockPath -Force
+    Remove-Item $LockBackup -Force
+    Write-Host '[matrix] Cargo.lock 已还原（基线构建会改写 patch 源）'
+}
 
 # ── 运行矩阵 ───────────────────────────────────────────────────────────────
 $Errors = @()
