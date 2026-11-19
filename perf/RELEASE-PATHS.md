@@ -40,6 +40,21 @@
   （如「归并按轨序」），上游未必接受。
 - 结论：**C 不作为短期路径**；以 B 为正式发布，A 为过渡。
 
+## 0.6.6 发布准备状态（2026-11-19）
+
+- 版本：`Cargo.toml` 0.6.5 → **0.6.6**；`CHANGELOG.md` 已补 0.6.6 条目；
+- tag：`v0.6.6` 已打并推送（指向 `d64a974`）；
+- `cargo package --list`：仅 `src/*` + `Cargo.toml` + README + lock（符合 `include`）；
+- `cargo publish --dry-run`：**通过**；
+- 测试：parallel 78+11+6+13、serial 78+11+6+12、doc 12/13 全绿；
+- **`cargo publish` 被阻塞**：本机无 crates.io token（`error: no token found`）。
+  需要 `cargo login <token>` 或设置 `CARGO_REGISTRY_TOKEN`，之后执行：
+  ```powershell
+  cd F:\midly-fork; cargo publish
+  ```
+- 发布后：把 lumino 的 `[patch.crates-io] lumino-midly = { git = ..., rev = ... }`
+  换成 `lumino-midly = "0.6.6"`（或移除 patch），`cargo update -p lumino-midly`，跑
+  `cargo test -p lumino-midi-model -p lumino-midi-loader` + `lumino-bench digest`。
 ## 建议顺序
 
 ```
