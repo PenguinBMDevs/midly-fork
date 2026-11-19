@@ -1,5 +1,13 @@
 # Midly
 
+> **Lumino fork.** This repository is `PenguinBMDevs/midly-fork`, a fork of upstream
+> [midly](https://github.com/kovaxis/midly) maintained for the
+> [Lumino](https://github.com/PenguinBMDevs/lumino-rs) editor.
+>
+> Versions use the `0.6.5-lumino.N` form: `0.6.5` is the upstream base, `-lumino.N` is the
+> fork build number — this is **not** an upstream release sequence. See `CHANGELOG.md` for
+> the fork's additions.
+
 Midly is a feature-complete MIDI decoder and encoder designed for efficiency and ease of use.
 
 See the [crate-level documentation](https://docs.rs/midly) for examples, detailed documentation and

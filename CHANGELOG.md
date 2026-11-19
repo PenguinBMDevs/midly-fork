@@ -1,7 +1,10 @@
 
 # Version changelog
 
-### 0.6.6
+### 0.6.5-lumino.1
+
+Lumino fork build 1 on top of upstream `0.6.5` — **not an upstream release**; the
+`-lumino.N` suffix is the fork's build number.
 
 - Add `TrackAllEvents::track_name` (first `FF 03` payload, borrowed raw bytes) — consumers
   no longer need a second full-file scan to collect track names.
