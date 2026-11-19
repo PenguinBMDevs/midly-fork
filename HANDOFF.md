@@ -327,11 +327,13 @@ cd F:\lumino-rs; cargo test -p lumino-midi-model -p lumino-midi-loader
 
 ## 8. 下一步（优先级序）
 
-0. **发布 0.6.5-lumino.1（唯一硬阻塞）**：
-   - 代码/测试/dry-run 全部就绪；tag `v0.6.5-lumino.1` 已推送；
-   - 阻塞在 crates.io 权限：owner 只有 `Enderman-bm`，当前 token 不是 owner（403）。
-     换 owner token 后 `cargo publish`；
-   - 发布后：lumino 依赖从 git rev 换成 `lumino-midly = "0.6.5-lumino.1"` → 测试 + digest → PR。
+0. **发布：交给上游处理** ✅（2026-11-19 原作者确认）：
+   - 原作者要求：midly 的改动**直接推 fork 的 `master`**，后续由他处理
+     （上游合并 / 正式发布）；
+   - 本仓库 `master` 已快进到 `baseline/0.6.5` 的最新提交并推送；
+   - 本机**不再**发布 crates.io（token / owner 问题由上游侧处理）；
+   - 若上游发布正式版本号，lumino 依赖届时从 git rev 改为该版本号（预发布
+     `0.6.5-lumino.1` 仅作 fork 内部标记保留）。
 1. **P4 解析热循环** ✅ **已完成唯一有效项**（其余为噪声内，见 §4）：
    - `e2904fe`：音符容量按 `track_bytes / 6` 预估（不变式：每 NoteOn/NoteOff
      ≥3 字节），单轨上限 16M 音符。Pi -30%、164M -23.5%、峰值 -2.7%。
