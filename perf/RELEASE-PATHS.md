@@ -43,6 +43,13 @@
   （如「归并按轨序」），上游未必接受。
 - 结论：**C 不作为短期路径**；以 B 为正式发布，A 为过渡。
 
+## 2026-11-19 已发布 0.7.0（上游）
+
+- crates.io：**`lumino-midly 0.7.0`**（未 yank）；
+- 发布包 `src/` 与 fork `master` 一致：`loader.rs` / `fast_midi.rs` / `lib.rs` 逐字节相同，
+  其余 5 个文件仅 CRLF/LF 差异；
+- lumino 已切换：删除 `[patch.crates-io]` 的 git rev，依赖改为 `lumino-midly = "0.7.0"`
+  （PR #312）；此后 CI/他机构建不再依赖 GitHub 可达。
 ## 2026-11-19 决策更新：发布交由上游
 
 原作者确认：**直接把 fork 的 `master` 推上去，后续由他处理**。因此：

@@ -129,8 +129,7 @@
   - #302（Tier2 + track_name）、#303（稳定基数排序）、#308（EOT 报告/trim/加载告警）、
     #310（导入 toast / 导出前缺 EOT 弹窗 / Strict / `total_ticks` 取最晚 EOT）全部 MERGED；
     #311 修复 i18n 漏登（dev CI 转绿）。
-  - 依赖仍为 `[patch.crates-io] lumino-midly = { git = ..., rev = "da2a68f" }`；
-    **发布完成后应切换为 `lumino-midly = "0.6.5-lumino.1"`**（预发布版本必须写全）。
+  - **2026-11-19：上游已发布 crates.io lumino-midly 0.7.0**，lumino 已切换依赖并删除 git patch（PR #312）；后续构建不再依赖 GitHub。
   - **不要在 lumino-rs 留任何未提交改动**（用户会重置）；需要实测时按 `perf/tier2/README.md` 临时接入，
     测完 `git checkout --` 还原。
 - 依赖 midly 的主仓 crate（6 个）：midi-model、midi-loader、midi-io、export、project、ui。
