@@ -1,6 +1,20 @@
 
 # Version changelog
 
+### 0.6.6
+
+- Add `TrackAllEvents::track_name` (first `FF 03` payload, borrowed raw bytes) — consumers
+  no longer need a second full-file scan to collect track names.
+- Add `TrackAllEvents::timing` (`TrackTiming`): `eot_tick`, `physical_end_tick`,
+  `content_end_tick`, `has_events_after_eot`, `has_unclosed_notes`.
+- Add the lock-free per-track parallel API `extract_all_events_per_track_collect_from_bytes`
+  (and the `_parallel_` variant): per-track work runs on worker threads, merged in track order.
+- Preallocate per-track note storage from the track byte length, removing repeated
+  reallocations on large files (32-bit note counts unchanged).
+- EOT is skipped during event parsing with zero hot-loop cost.
+- Fix the serial (`parallel` disabled) build (E0382 in the streaming loader).
+- Fix `Smf` PitchBend encoding to match the fast-path 14-bit contract.
+
 ### 0.5.3
 
 - Add `to_static` methods to drop lifetimed data.
