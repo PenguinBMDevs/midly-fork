@@ -10,23 +10,7 @@
 //!
 //! # Example
 //!
-//! ```rust,no_run
-//! use midly::loader::{StreamingNoteLoader, NoteIndex};
-//! use std::path::Path;
-//!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! // Stream notes from a large MIDI file
-//! let mut loader = StreamingNoteLoader::open(Path::new("large_song.mid"))?;
-//!
-//! // Load notes visible in current window
-//! let current_tick = 10000.0f32;
-//! let ticks_per_screen = 5000.0f32;
-//! let (notes, active_keys) = loader.prepare_frame(current_tick, ticks_per_screen);
-//!
-//! println!("Visible notes: {}", notes.len());
-//! # Ok(())
-//! # }
-//! ```
+//! See [`StreamingNoteLoader`] for a memory-mapped streaming example.
 
 use crate::event::{MetaMessage, MidiMessage, TrackEvent, TrackEventKind};
 
@@ -2052,6 +2036,26 @@ impl<'a> TrackCursor<'a> {
 /// The loader uses unsafe transmute to extend lifetimes of track cursors. This is safe
 /// because the memory-mapped file (`Mmap`) is owned by the loader and kept alive for
 /// its entire lifetime.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use midly::loader::StreamingNoteLoader;
+/// use std::path::Path;
+///
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// // Stream notes from a large MIDI file
+/// let mut loader = StreamingNoteLoader::open(Path::new("large_song.mid"))?;
+///
+/// // Load notes visible in current window
+/// let current_tick = 10000.0f32;
+/// let ticks_per_screen = 5000.0f32;
+/// let (notes, _active_keys) = loader.prepare_frame(current_tick, ticks_per_screen);
+///
+/// println!("Visible notes: {}", notes.len());
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Debug)]
 #[cfg(all(feature = "std", feature = "memmap"))]
 pub struct StreamingNoteLoader {
