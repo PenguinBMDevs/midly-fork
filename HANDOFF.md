@@ -110,7 +110,12 @@
 
 ## 3. 当前仓库状态（重要）
 
-- **fork**：`baseline/0.6.5` = 9ade3f7，工作树干净。**19 个提交全部 GPG 签名（G）并已推送**。
+- **fork**：`baseline/0.6.5` = `10d0c53`（47 提交，全部 GPG 签名并已推送），工作树干净。
+  - 发布 tag **`v0.6.5-lumino.1`** 已推送（Lumino 专用构建号，**不占用上游版本序列**）。
+  - **发布状态：`cargo publish` 待完成**。已通过：`cargo package --list`、`cargo publish --dry-run`、
+    全量测试（parallel 78+11+6+13 / serial 78+11+6+12 / doc 12·13）。
+    阻塞：crates.io 上 `lumino-midly` 的 owner 只有 `Enderman-bm`，当前 token 不是 owner
+    （token 有效、邮箱已验证，上传返回 403）。换 owner token 后执行 `cargo publish`。
   - 远端布局：`origin` = `ssh://git@ssh.github.com:443/...`（本机无 SSH 公钥，不能用）；
     **`github` = `https://github.com/PenguinBMDevs/midly-fork.git`（推送用这个）**。
   - 推送通道：本机 Clash 代理 `127.0.0.1:7890`，仓库级只配 github.com：
@@ -120,12 +125,12 @@
     `baseline-0.6.5-signed-2026-11-18.bundle`（gitignore）。
   - **旧 SHA 已作废**：补签是对 `master..baseline/0.6.5` 逐提交 `--amend -S` 重写，§2 表里的
     SHA 不再是当前值，以 `git log --oneline` 为准。
-- **lumino-rs（dev）：工作区已被用户重置并提交自身工作，与 fork 无关联**。
-  - 用户决策：**Tier2 合并等 midly 全部改动完成后再做**（依赖改造视为待办）。
-  - **2026-11-18 晚：Tier2 + track_name 已本地临时接入验证并完整还原**
-    （181 绿：56+1+124，5 ignored；Pi/164M digest 逐字段一致；
-    Pi 16.74→8.25ms -51%、164M 2818→783ms -74%）。工作树仍干净（`cargo check` 通过）。
-  - 参考实现与接入步骤、A/B 数据：`perf/tier2/`（`README.md` + `document_build.rs.tier2`）。
+- **lumino-rs（dev）：Tier2 / 基数排序 / EOT 下游均已合并进 `dev`**。
+  - #302（Tier2 + track_name）、#303（稳定基数排序）、#308（EOT 报告/trim/加载告警）、
+    #310（导入 toast / 导出前缺 EOT 弹窗 / Strict / `total_ticks` 取最晚 EOT）全部 MERGED；
+    #311 修复 i18n 漏登（dev CI 转绿）。
+  - 依赖仍为 `[patch.crates-io] lumino-midly = { git = ..., rev = "da2a68f" }`；
+    **发布完成后应切换为 `lumino-midly = "0.6.5-lumino.1"`**（预发布版本必须写全）。
   - **不要在 lumino-rs 留任何未提交改动**（用户会重置）；需要实测时按 `perf/tier2/README.md` 临时接入，
     测完 `git checkout --` 还原。
 - 依赖 midly 的主仓 crate（6 个）：midi-model、midi-loader、midi-io、export、project、ui。
@@ -259,8 +264,8 @@
 
 ```powershell
 cd F:\midly-fork
-cargo test --features memmap,strict                                        # 78+10+6+13
-cargo test --no-default-features --features std,alloc,memmap,strict        # 78+10+6+12
+cargo test --features memmap,strict                                        # 78+11+6+13
+cargo test --no-default-features --features std,alloc,memmap,strict        # 78+11+6+12
 cargo test --test eot --features memmap,strict -- --nocapture
 cargo clippy --all-targets --features memmap,strict
 rustfmt --edition 2024 --check src/loader.rs src/fast_midi.rs tests/eot.rs tests/oracle.rs tests/oracle/*.rs
@@ -322,8 +327,11 @@ cd F:\lumino-rs; cargo test -p lumino-midi-model -p lumino-midi-loader
 
 ## 8. 下一步（优先级序）
 
-0. **推送已完成** ✅：19 提交已签名并推到 `github/baseline/0.6.5`（详见 §3）。后续提交：
-   `git push github baseline/0.6.5`（仓库级代理配置已就绪）。
+0. **发布 0.6.5-lumino.1（唯一硬阻塞）**：
+   - 代码/测试/dry-run 全部就绪；tag `v0.6.5-lumino.1` 已推送；
+   - 阻塞在 crates.io 权限：owner 只有 `Enderman-bm`，当前 token 不是 owner（403）。
+     换 owner token 后 `cargo publish`；
+   - 发布后：lumino 依赖从 git rev 换成 `lumino-midly = "0.6.5-lumino.1"` → 测试 + digest → PR。
 1. **P4 解析热循环** ✅ **已完成唯一有效项**（其余为噪声内，见 §4）：
    - `e2904fe`：音符容量按 `track_bytes / 6` 预估（不变式：每 NoteOn/NoteOff
      ≥3 字节），单轨上限 16M 音符。Pi -30%、164M -23.5%、峰值 -2.7%。
@@ -339,22 +347,21 @@ cd F:\lumino-rs; cargo test -p lumino-midi-model -p lumino-midi-loader
    （164M 与 StarT210k），**没有任何真实 format 0 素材** → 无法给出「单轨占主导」的分布证据。
    A3 上限：单轨 101 Mevents/s vs 多轨 445 Mevents/s（4.3×），但 8.8M 单轨绝对时间仅 85ms。
    **结论：P5 暂不立项**，除非后续出现真实的 format 0/单巨轨素材或用户侧统计。
-3. **Tier2 落地 ✅ 已合并**：`lumino-rs` PR #302（base `dev`，merge commit `e7407dff`）。
-   本地验证：181 绿 + digest 一致 + Pi -51% / 164M -74%；依赖为 fork `rev = e8edb9a`。
-   **后续优化（A4 数据重排）**：巨轨排序 + ChunkedList（450ms 临界路径）> P5 轨内解析；
-   控制事件 k-way merge 已无价值（1.1ms）。
-   **A5 已落地为 PR #303**（`feat/midi-track-radix-sort`，base 已改为 `dev`）：
-   稳定基数排序 → 164M 端到端 728.8→543.4ms（-25.5%），峰值 +7.8%；
-   等 CI 全绿后合并。
+3. **Tier2 + 巨轨排序 ✅ 均已合并**：
+   - #302（Tier2 + track_name）：Pi -51% / 164M -74%；
+   - #303（稳定基数排序）：164M 端到端 728.8→543.4ms（-25.5%），峰值 +7.8%；
+   - 控制事件 k-way merge 已由数据否决（1.1ms）。
 4. **P2 矩阵补全** ✅ **脚本已落地**（`perf/matrix.ps1`）：版本 × parallel/serial × 线程 × 素材，
    自动构建/缓存、自动关 `collect-api`（0.6.3/0.6.4 基线）、输出 TSV + 环境 meta。
-   剩余：mmap 冷/热页缓存分离口径；电源模式固定并记录（需在空闲窗口跑正式矩阵）。
-5. **EOT 下游**（进行中，PR #308）：
+   剩余（可选）：mmap 冷/热页缓存分离口径；电源模式固定并记录（需在空闲窗口跑正式矩阵）。
+5. **EOT 下游 ✅ 已完成**：
    - fork `da2a68f`：`TrackTiming.has_unclosed_notes`（悬挂音符诊断，解析语义不变）；
-   - lumino `feat/midi-eot-downstream`：`eot` 模块（`LoadTimingReport` / `TrimReport` /
-     `trim_after_eot`）、`from_notes_bytes_with_timing`、加载期 `tracing::warn`；
-   - 待办：UI 展示诊断（目前只有日志）、挂起音符的产品侧收尾策略（本 PR 只报告不裁剪）。
-   - 另：Strict 解析模式 API 仍未做（`is_strict_clean()` 已可供调用方使用）。
+   - lumino #308（报告 / trim / 加载告警）与 #310（导入 toast / 导出前缺 EOT 弹窗 /
+     Strict API / `total_ticks` 取最晚 EOT）均已合并；
+   - 导航项：UI 人工验收（`eot-after-events.mid` 触发 toast；PiDamaged 触发导出弹窗）。
+6. **fork CI（可选工程项）**：本仓库没有 `.github/workflows`。可把
+   `cargo test`（parallel/serial）+ `perf/matrix.ps1` smoke 做成 Actions 门，
+   给 0.6.5-lumino.N 留测试记录。
 
 ## 9. 技术陷阱清单
 
